@@ -162,7 +162,6 @@ class ImageFolder(data.Dataset):
                 tr.ToTensor()
             ])
             
-    # ... (rest of the class remains unchanged)
     def __getitem__(self, index):
         img_path, gt_path = self.imgs[index]
         try:

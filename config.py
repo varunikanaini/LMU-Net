@@ -117,8 +117,8 @@ DEFAULT_ARGS = {
     'patience': 15,
 
     # Defaults for scaling/resolution will be backbone-dependent
-    # 'scale_h': 224, 
-    # 'scale_w': 224,
+    'scale-h': 224, 
+    'scale-w': 224,
 
     'deep_supervision_weights': [0.2, 0.4, 0.6, 0.8, 1.0],
 
