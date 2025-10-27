@@ -7,7 +7,21 @@
 ### Training
 ```
 
-python train.py
+!python train.py \
+--dataset-name 'TSRS_RSNA-Epiphysis' \
+--backbone 'mobilenet_v2' \
+--epochs 550 \
+--batch-size 16 \
+--lr 1e-3 \
+--weight-decay 0.0001 \
+--patience 40 \
+--fine-tune-epochs 60 \
+--deep-supervision-weights 0.2 0.4 0.6 0.8 1.0 \
+--focal-loss-weight 0.8 \
+--dice-loss-weight 1.2 \
+--scheduler-type 'CosineAnnealingWarmRestarts' \
+--scheduler-T0 15 \
+--num-workers 4
 
 ```
 
@@ -16,13 +30,5 @@ python train.py
 ```
 
 python test.py
-
-```
-
-## Notes
-
-```
-
-If you want to train the LMU-Net on the TSRS_RSNA-Articular-Surface dataset, please update the "datasets_root" in the config.py. 
 
 ```
