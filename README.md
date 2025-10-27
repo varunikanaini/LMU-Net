@@ -29,6 +29,14 @@
 
 ```
 
-python test.py
+!python train_light.py \
+--dataset-name 'TSRS_RSNA-Epiphysis' \
+--backbone 'mobilenet_v2' \
+--test-only
+
+!python benchmark_fps.py \
+--backbone 'mobilenet_v2' \
+--input-h 224 \
+--input-w 224
 
 ```

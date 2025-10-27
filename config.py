@@ -86,7 +86,6 @@ BACKBONE_INPUT_RESOLUTIONS = {
     'vgg19': (224, 224),
 }
 
-# In /kaggle/working/ARAA-Net/config.py
 
 BACKBONE_CHANNELS = {
     'vgg16': {'e1': 64, 'e2': 128, 'e3': 256, 'e4': 512, 'bottleneck': 512},
@@ -141,12 +140,12 @@ DEFAULT_ARGS = {
     'scheduler_factor': 0.5,
     'scheduler_min_lr': 1e-6,
     'scheduler_T0': 10, 
-    'scheduler_T_mult': 2, # Use integer default
+    'scheduler_T_mult': 2, 
 
     'test_only': False,
     'resume': False,
     
-    'fine_tune_epochs': 0, # Default to no fine-tuning, will be controlled by CLI arg
+    'fine_tune_epochs': 0, 
 }
 
 def get_dataset_info(dataset_name):
