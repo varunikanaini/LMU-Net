@@ -7,7 +7,7 @@ import logging
 from thop import profile, clever_format
 
 # --- Setup Project Path ---
-project_path = '/kaggle/working/ARAA-Net'
+project_path = '/kaggle/working/LMU-Net'
 if project_path not in sys.path:
     sys.path.insert(0, project_path)
 

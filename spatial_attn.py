@@ -1,4 +1,4 @@
-# /kaggle/working/ARAA-Net/spatial_attn.py
+# /kaggle/working/LMU-Net/spatial_attn.py
 
 import torch
 import torch.nn as nn

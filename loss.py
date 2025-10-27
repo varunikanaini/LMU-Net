@@ -11,9 +11,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-###################################################################
-# ########################## iou loss #############################
-###################################################################
 class IOU(torch.nn.Module):
     def __init__(self):
         super(IOU, self).__init__()
@@ -29,9 +26,6 @@ class IOU(torch.nn.Module):
     def forward(self, pred, target):
         return self._iou(pred, target)
 
-###################################################################
-# #################### structure loss #############################
-###################################################################
 class structure_loss(torch.nn.Module):
     def __init__(self):
         super(structure_loss, self).__init__()

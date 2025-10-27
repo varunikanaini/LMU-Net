@@ -2,8 +2,8 @@
 import os
 
 # --- Base Directories ---
-DATA_ROOT = '/kaggle/working/ARAA-Net/data'
-CKPT_ROOT = '/kaggle/working/ARAA-Net/ckpt'
+DATA_ROOT = '/kaggle/working/LMU-Net/data'
+CKPT_ROOT = '/kaggle/working/LMU-Net/ckpt'
 
 os.makedirs(DATA_ROOT, exist_ok=True)
 os.makedirs(CKPT_ROOT, exist_ok=True)

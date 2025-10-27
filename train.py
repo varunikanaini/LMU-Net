@@ -1,4 +1,4 @@
-# /kaggle/working/ARAA-Net/train.py
+# /kaggle/working/LMU-Net/train.py
 
 import sys, os, logging, argparse, torch, numpy as np, json
 from torch import nn, optim
@@ -8,7 +8,7 @@ import torch.nn.functional as F
 from scipy.ndimage import binary_erosion, binary_dilation
 from sklearn.model_selection import KFold
 
-project_path = '/kaggle/working/ARAA-Net'
+project_path = '/kaggle/working/LMU-Net'
 if project_path not in sys.path: sys.path.insert(0, project_path)
 
 import config

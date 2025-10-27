@@ -1,4 +1,4 @@
-# /kaggle/working/ARAA-Net/lasa.py (User's ORIGINAL code, with structural fix for r_ks)
+# /kaggle/working/LMU-Net/lasa.py (User's ORIGINAL code, with structural fix for r_ks)
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

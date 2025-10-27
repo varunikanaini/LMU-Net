@@ -1,4 +1,4 @@
-# /kaggle/working/ARAA-Net/se_block.py
+# /kaggle/working/LMU-Net/se_block.py
 import torch
 import torch.nn as nn
 
