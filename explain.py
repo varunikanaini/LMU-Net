@@ -1,4 +1,4 @@
-# /kaggle/working/ARAA-Net/grad_cam_explain.py
+# /kaggle/working/ARAA-Net/grad_cam_explain.py (Corrected)
 
 import torch
 import numpy as np
@@ -27,18 +27,15 @@ from pytorch_grad_cam import GradCAM
 from pytorch_grad_cam.utils.image import show_cam_on_image
 from pytorch_grad_cam.utils.model_targets import SemanticSegmentationTarget
 
-# --- Helper Function ---
+# ... (Helper function 'denormalize' remains the same) ...
 def denormalize(tensor, mean, std):
-    """Denormalizes a tensor image for visualization."""
-    # Handle both grayscale (1 channel) and RGB (3 channels)
     if tensor.shape[0] == 1:
         mean, std = [mean[0]], [std[0]]
-    
     for t, m, s in zip(tensor, mean, std):
         t.mul_(s).add_(m)
     return tensor
 
-# --- Argument Parsing ---
+# --- Argument Parsing (Unchanged) ---
 def get_args():
     parser = argparse.ArgumentParser(description='Generate Grad-CAM Explanations for a Trained Model')
     parser.add_argument('--exp-name', type=str, required=True, help='Name of the experiment folder in ./ckpt')
@@ -48,73 +45,46 @@ def get_args():
     parser.add_argument('--scale-h', type=int, default=512, help='Target height for image resizing.')
     parser.add_argument('--scale-w', type=int, default=512, help='Target width for image resizing.')
     parser.add_argument('--target-class', type=int, default=1, help='The class index to generate explanations for (e.g., 1 for epiphysis).')
-
     args = parser.parse_args()
-    
     dataset_info = config.DATASET_CONFIG[args.dataset_name]
     args.dataset_path, args.num_classes = dataset_info['path'], dataset_info['num_classes']
-    
-    # We don't need all default args, just the path and class info
     return args
 
-# --- Core XAI Logic ---
+# --- Core XAI Logic (Corrected) ---
 def generate_grad_cam_explanations(model, loader, device, args):
-    # --- The Target Layer is Crucial for Good Visuals ---
-    # We choose the deepest, most semantically rich layer of the encoder.
-    # For MobileNetV2, the last convolutional block in the 'features' is a great choice.
     target_layer = model.bottleneck_layer[-1].conv
-    
-    # --- Setup Grad-CAM ---
     cam = GradCAM(model=model, target_layers=[target_layer], use_cuda=(device.type == 'cuda'))
     
-    output_dir = os.path.join(config.CKPT_ROOT, args.exp-name, f"fold_{args.fold}", "grad_cam_explanations")
+    # --- FIX: Use underscore instead of hyphen ---
+    output_dir = os.path.join(config.CKPT_ROOT, args.exp_name, f"fold_{args.fold}", "grad_cam_explanations")
     check_mkdir(output_dir)
     print(f"Saving Grad-CAM visualizations to: {output_dir}")
 
-    # Define mean and std for denormalization
-    mean = [0.485, 0.456, 0.406]
-    std = [0.229, 0.224, 0.225]
+    mean = [0.485, 0.456, 0.406]; std = [0.229, 0.224, 0.225]
     if args.dataset_name in ['JSRT', 'COVID19_Radiography']:
         mean, std = [0.5], [0.5]
 
     for i, sample in enumerate(tqdm(loader, desc="Generating Grad-CAM")):
-        if i >= args.num_images:
-            break
-        if sample is None:
-            continue
+        if i >= args.num_images: break
+        if sample is None: continue
 
         input_tensor = sample['image'].to(device)
         image_name = sample.get('name', [f'image_{i}'])[0]
 
-        # --- Define the Target for Segmentation ---
-        # We want to know which pixels influenced the model to predict our target class.
         targets = [SemanticSegmentationTarget(args.target_class, input_tensor)]
-
-        # --- Generate Grad-CAM ---
-        grayscale_cam = cam(input_tensor=input_tensor, targets=targets, aug_smooth=True, eigen_smooth=True)
-        grayscale_cam = grayscale_cam[0, :] # Get the first (and only) CAM result
-
-        # --- Prepare Original Image for Overlay ---
-        # Denormalize and convert to a 0-255 RGB numpy array
+        grayscale_cam = cam(input_tensor=input_tensor, targets=targets, aug_smooth=True, eigen_smooth=True)[0, :]
+        
         original_img = denormalize(input_tensor.clone().squeeze(0).cpu(), mean, std)
         original_img = np.transpose(original_img.numpy(), (1, 2, 0))
-        original_img = np.clip(original_img, 0, 1) # Ensure values are in [0, 1] range
+        original_img = np.clip(original_img, 0, 1)
 
-        # --- Create the Visualization ---
-        # The library provides a utility to create a beautiful overlay
         visualization = show_cam_on_image(original_img, grayscale_cam, use_rgb=True)
 
-        # --- Plotting ---
         fig, axes = plt.subplots(1, 2, figsize=(12, 6))
-        
-        # Convert original_img back to 0-255 for display if needed
         axes[0].imshow((original_img * 255).astype(np.uint8))
-        axes[0].set_title(f"Original: {image_name}")
-        axes[0].axis('off')
-
+        axes[0].set_title(f"Original: {image_name}"); axes[0].axis('off')
         axes[1].imshow(visualization)
-        axes[1].set_title("Grad-CAM Overlay")
-        axes[1].axis('off')
+        axes[1].set_title("Grad-CAM Overlay"); axes[1].axis('off')
 
         plt.tight_layout()
         save_path = os.path.join(output_dir, f"{os.path.splitext(image_name)[0]}_grad_cam.png")
@@ -123,15 +93,16 @@ def generate_grad_cam_explanations(model, loader, device, args):
 
     print("\nGrad-CAM generation complete.")
 
-# --- Main Execution ---
+# --- Main Execution (Corrected) ---
 if __name__ == '__main__':
     args = get_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    # --- Load Model ---
     model = Light_LASA_Unet(num_classes=args.num_classes, lasa_kernels=config.DEFAULT_ARGS.get('lasa_kernels')).to(device)
-    checkpoint_path = os.path.join(config.CKPT_ROOT, args.exp-name, f"fold_{args.fold}", 'best_checkpoint.pth')
+    
+    # --- FIX: Use underscore instead of hyphen ---
+    checkpoint_path = os.path.join(config.CKPT_ROOT, args.exp_name, f"fold_{args.fold}", 'best_checkpoint.pth')
     
     if not os.path.exists(checkpoint_path):
         print(f"Error: Checkpoint not found at {checkpoint_path}")
@@ -144,7 +115,6 @@ if __name__ == '__main__':
         print(f"Error loading model state_dict: {e}")
         sys.exit(1)
     
-    # --- Load Dataset ---
     test_data_path = os.path.join(args.dataset_path, 'test')
     test_dataset = ImageFolder(root=test_data_path, dataset_name=args.dataset_name, args=args, split='test')
     
@@ -153,6 +123,4 @@ if __name__ == '__main__':
         sys.exit(1)
 
     test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=2)
-
-    # --- Run Grad-CAM Generation ---
     generate_grad_cam_explanations(model, test_loader, device, args)
