@@ -1,4 +1,4 @@
-# /kaggle/working/ARAA-Net/grad_cam_explain.py (Corrected)
+# /kaggle/working/ARAA-Net/grad_cam_explain.py (Final)
 
 import torch
 import numpy as np
@@ -26,29 +26,28 @@ from misc import check_mkdir
 from pytorch_grad_cam import GradCAM
 from pytorch_grad_cam.utils.image import show_cam_on_image
 
-# --- CORRECTED: Robust Custom Target for Segmentation Models ---
+# --- FINAL: Correct Custom Target for Segmentation Models ---
 class SegmentationClassTarget:
     """
     A target class for Grad-CAM on segmentation models. This is now robust
-    to handle both 4D (batched) and 3D (squeezed) model outputs.
+    and correctly aggregates the activation map to a single scalar value.
     """
     def __init__(self, category):
         self.category = category
 
     def __call__(self, model_output):
-        # The model returns a tuple, we select the final output.
         final_output = model_output[-1]
 
-        # --- THE FIX ---
-        # Check the number of dimensions of the output tensor.
+        # --- THE FINAL FIX ---
+        # We must aggregate the spatial map into a single scalar value.
+        # A simple sum is a common and effective way to do this.
         if len(final_output.shape) == 4:
-            # This is the standard (B, C, H, W) case. We use the first batch element.
-            return final_output[0, self.category, :, :]
+            # (B, C, H, W) -> select batch 0, category C, and sum H and W
+            return final_output[0, self.category, :, :].sum()
         elif len(final_output.shape) == 3:
-            # This is the squeezed (C, H, W) case, which caused the error.
-            return final_output[self.category, :, :]
+            # (C, H, W) -> select category C and sum H and W
+            return final_output[self.category, :, :].sum()
         else:
-            # Raise an error for unexpected shapes.
             raise ValueError(f"Expected model output to have 3 or 4 dimensions, but got {len(final_output.shape)}")
 
 # ... (Helper 'denormalize' and 'get_args' functions remain the same) ...
@@ -73,7 +72,7 @@ def get_args():
     args.dataset_path, args.num_classes = dataset_info['path'], dataset_info['num_classes']
     return args
 
-# --- Core XAI Logic (Corrected) ---
+# --- Core XAI Logic (Unchanged) ---
 def generate_grad_cam_explanations(model, loader, device, args):
     target_layer = model.bottleneck_layer[-1][0]
     cam = GradCAM(model=model, target_layers=[target_layer])
@@ -93,9 +92,7 @@ def generate_grad_cam_explanations(model, loader, device, args):
         input_tensor = sample['image'].to(device)
         image_name = sample.get('name', [f'image_{i}'])[0]
 
-        # Use our new, robust target class
         targets = [SegmentationClassTarget(args.target_class)]
-
         grayscale_cam = cam(input_tensor=input_tensor, targets=targets, aug_smooth=True, eigen_smooth=True)[0, :]
         
         original_img = denormalize(input_tensor.clone().squeeze(0).cpu(), mean, std)
