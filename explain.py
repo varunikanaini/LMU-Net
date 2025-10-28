@@ -25,9 +25,28 @@ from misc import check_mkdir
 # --- Grad-CAM Imports ---
 from pytorch_grad_cam import GradCAM
 from pytorch_grad_cam.utils.image import show_cam_on_image
-from pytorch_grad_cam.utils.model_targets import SemanticSegmentationTarget
 
-# ... (Helper function 'denormalize' remains the same) ...
+# --- NEW: Custom Target for Segmentation Models ---
+class SegmentationClassTarget:
+    """
+    A target class for Grad-CAM on segmentation models.
+    This tells Grad-CAM to use the activations of a specific class
+    across the entire spatial map as the target for backpropagation.
+    """
+    def __init__(self, category):
+        self.category = category
+
+    def __call__(self, model_output):
+        # The model returns a tuple of outputs (due to deep supervision).
+        # We must select the final, main output for our explanation.
+        final_output = model_output[-1]
+        
+        # We are working with a batch size of 1, so we select the first element.
+        # Then, we select the channel corresponding to our target category.
+        # The result is a 2D map of activations for our class.
+        return final_output[0, self.category, :, :]
+
+# ... (Helper 'denormalize' and 'get_args' functions remain the same) ...
 def denormalize(tensor, mean, std):
     if tensor.shape[0] == 1:
         mean, std = [mean[0]], [std[0]]
@@ -35,7 +54,6 @@ def denormalize(tensor, mean, std):
         t.mul_(s).add_(m)
     return tensor
 
-# --- Argument Parsing (Unchanged) ---
 def get_args():
     parser = argparse.ArgumentParser(description='Generate Grad-CAM Explanations for a Trained Model')
     parser.add_argument('--exp-name', type=str, required=True, help='Name of the experiment folder in ./ckpt')
@@ -52,9 +70,7 @@ def get_args():
 
 # --- Core XAI Logic (Corrected) ---
 def generate_grad_cam_explanations(model, loader, device, args):
-    # --- FIX: Access the Conv2d layer by index [0] ---
     target_layer = model.bottleneck_layer[-1][0]
-    # New, correct line
     cam = GradCAM(model=model, target_layers=[target_layer])
     
     output_dir = os.path.join(config.CKPT_ROOT, args.exp_name, f"fold_{args.fold}", "grad_cam_explanations")
@@ -72,7 +88,9 @@ def generate_grad_cam_explanations(model, loader, device, args):
         input_tensor = sample['image'].to(device)
         image_name = sample.get('name', [f'image_{i}'])[0]
 
-        targets = [SemanticSegmentationTarget(args.target_class, input_tensor)]
+        # --- FIX: Use our new, simpler target class ---
+        targets = [SegmentationClassTarget(args.target_class)]
+
         grayscale_cam = cam(input_tensor=input_tensor, targets=targets, aug_smooth=True, eigen_smooth=True)[0, :]
         
         original_img = denormalize(input_tensor.clone().squeeze(0).cpu(), mean, std)
