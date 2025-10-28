@@ -67,16 +67,14 @@ def get_args():
 
 # --- Core XAI Logic (Corrected) ---
 def generate_hires_cam_explanations(model, loader, device, args):
-    # --- FIX: Precisely target the last Conv layer in the chosen block ---
+    # --- FINAL FIX: Target the correct Conv2d layer by its specific index ---
     if args.target_layer == 'bottleneck':
         # Target the last Conv2d inside the final Conv2dNormActivation of the bottleneck
         target_layer = model.bottleneck_layer[-1][0]
     elif args.target_layer == 'encoder4':
-        # Target the last Conv2d inside the last InvertedResidual block of encoder4 (before the SEBlock)
-        # model.encoder4[-2] gets the InvertedResidual block
-        # .conv[-1] gets the final Conv2dNormActivation in that block
-        # [0] gets the Conv2d layer itself
-        target_layer = model.encoder4[-2].conv[-1][0]
+        # Target the final pointwise projection Conv2d layer in the last InvertedResidual block of encoder4
+        # This layer is at index [2] of the block's internal .conv sequence.
+        target_layer = model.encoder4[-2].conv[2]
     else:
         raise ValueError(f"Invalid target layer: {args.target_layer}")
 
