@@ -1,4 +1,4 @@
-# /kaggle/working/LMU-Net/xai.py (Final Robust Version)
+# /kaggle/working/LMU-Net/xai.py (Final Version with Typo Fix)
 
 import torch
 import numpy as np
@@ -64,7 +64,6 @@ def get_args():
     parser = argparse.ArgumentParser(description='Generate CAM visualizations for a trained segmentation model')
     parser.add_argument('--exp-name', type=str, required=True, help='Name of the experiment folder in ./ckpt')
     parser.add_argument('--dataset-name', type=str, required=True, choices=list(config.DATASET_CONFIG.keys()), help='Name of the dataset as defined in config.py')
-    # CORRECTED: Removed 'fullgrad' as it's incompatible with the model architecture.
     parser.add_argument('--method', type=str, default='gradcam',
                         choices=['gradcam', 'hirescam', 'gradcam++', 'scorecam', 'xgradcam',
                                  'ablationcam', 'eigencam', 'eigengradcam', 'layercam'],
@@ -89,8 +88,11 @@ def main():
     print(f"Using device: {device}")
 
     # --- Load Model ---
-    model = Light_LASA_Unet(num_classes=args.num_classes, lasa_kernels=args.lasa_kernels)
-    checkpoint_path = os.path.join(config.CKPT_ROOT, args.exp-name, f"fold_{args.fold}", 'best_checkpoint.pth')
+    model = Light_LAS_Unet(num_classes=args.num_classes, lasa_kernels=args.lasa_kernels)
+    
+    # ----- THE TYPO FIX IS HERE -----
+    # Changed args.exp-name to args.exp_name
+    checkpoint_path = os.path.join(config.CKPT_ROOT, args.exp_name, f"fold_{args.fold}", 'best_checkpoint.pth')
 
     if not os.path.exists(checkpoint_path):
         print(f"Error: Checkpoint not found at {checkpoint_path}")
@@ -115,7 +117,6 @@ def main():
         'eigengradcam': EigenGradCAM, 'layercam': LayerCAM
     }
     
-    # Universal constructor that works for all methods
     cam_class = cam_algorithm[args.method]
     cam = cam_class(model=model_wrapper, target_layers=target_layers)
 
@@ -143,7 +144,6 @@ def main():
         image_tensor = sample['image'].to(device)
         image_name = sample.get('name', [f'image_{i}'])[0]
 
-        # Prepare image for visualization
         rgb_img_tensor = image_tensor.clone().squeeze(0).cpu()
         if rgb_img_tensor.shape[0] == 1: rgb_img_tensor = rgb_img_tensor.repeat(3, 1, 1)
         mean = [0.5] if args.dataset_name in ['JSRT', 'COVID19_Radiography'] else [0.485, 0.456, 0.406]
@@ -152,14 +152,11 @@ def main():
         
         targets = [SemanticSegmentationTarget(args.target_class, (sample['label'].squeeze().numpy() == args.target_class).astype(np.float32))]
 
-        # ----- FINAL, CORRECTED CONDITIONAL LOGIC FOR THE CAM CALL -----
         call_kwargs = {'input_tensor': image_tensor, 'targets': targets}
 
-        # Suppress internal progress bars for specific methods
         if args.method in ['scorecam', 'ablationcam', 'layercam']:
             call_kwargs['show_progress'] = False
 
-        # Disable smoothing for HiResCAM to respect its faithfulness guarantees
         if args.method == 'hirescam':
             call_kwargs['eigen_smooth'] = False
             call_kwargs['aug_smooth'] = False
@@ -168,7 +165,6 @@ def main():
             call_kwargs['aug_smooth'] = True
             
         grayscale_cam = cam(**call_kwargs)[0, :]
-        # -----------------------------------------------------------------
 
         cam_image = show_cam_on_image(rgb_img_np, grayscale_cam, use_rgb=True)
 
