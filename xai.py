@@ -25,7 +25,7 @@ from misc import check_mkdir
 # --- CAM Imports ---
 from pytorch_grad_cam import (
     GradCAM, HiResCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, XGradCAM,
-    EigenCAM, EigenGradCAM, LayerCAM, FullGrad
+    EigenCAM, EigenGradCAM, LayerCAM
 )
 from pytorch_grad_cam.utils.image import show_cam_on_image
 
@@ -64,9 +64,10 @@ def get_args():
     parser = argparse.ArgumentParser(description='Generate CAM visualizations for a trained segmentation model')
     parser.add_argument('--exp-name', type=str, required=True, help='Name of the experiment folder in ./ckpt')
     parser.add_argument('--dataset-name', type=str, required=True, choices=list(config.DATASET_CONFIG.keys()), help='Name of the dataset as defined in config.py')
+    # CORRECTED: Removed 'fullgrad' as it's incompatible with the model architecture.
     parser.add_argument('--method', type=str, default='gradcam',
                         choices=['gradcam', 'hirescam', 'gradcam++', 'scorecam', 'xgradcam',
-                                 'ablationcam', 'eigencam', 'eigengradcam', 'layercam', 'fullgrad'],
+                                 'ablationcam', 'eigencam', 'eigengradcam', 'layercam'],
                         help='CAM visualization method')
     parser.add_argument('--fold', type=int, default=0, help='Fold number to visualize the results for.')
     parser.add_argument('--num-images', type=int, default=20, help='Number of images to visualize from the test set.')
@@ -89,7 +90,7 @@ def main():
 
     # --- Load Model ---
     model = Light_LASA_Unet(num_classes=args.num_classes, lasa_kernels=args.lasa_kernels)
-    checkpoint_path = os.path.join(config.CKPT_ROOT, args.exp_name, f"fold_{args.fold}", 'best_checkpoint.pth')
+    checkpoint_path = os.path.join(config.CKPT_ROOT, args.exp-name, f"fold_{args.fold}", 'best_checkpoint.pth')
 
     if not os.path.exists(checkpoint_path):
         print(f"Error: Checkpoint not found at {checkpoint_path}")
@@ -111,26 +112,14 @@ def main():
     cam_algorithm = {
         'gradcam': GradCAM, 'hirescam': HiResCAM, 'scorecam': ScoreCAM, 'gradcam++': GradCAMPlusPlus,
         'ablationcam': AblationCAM, 'xgradcam': XGradCAM, 'eigencam': EigenCAM,
-        'eigengradcam': EigenGradCAM, 'layercam': LayerCAM, 'fullgrad': FullGrad
+        'eigengradcam': EigenGradCAM, 'layercam': LayerCAM
     }
     
-    # ----- THE FINAL, CORRECTED INITIALIZATION LOGIC -----
+    # Universal constructor that works for all methods
     cam_class = cam_algorithm[args.method]
-    
-    # Define common arguments for the constructor
-    cam_kwargs = {"model": model_wrapper, "target_layers": target_layers}
-    
-    # Add 'show_progress' to the CONSTRUCTOR arguments only for the methods that support it
-    if args.method in ['scorecam', 'ablationcam', 'layercam']:
-        cam_kwargs["show_progress"] = False
-        
-    cam = cam_class(**cam_kwargs)
+    cam = cam_class(model=model_wrapper, target_layers=target_layers)
 
     # --- Load Dataset ---
-    def custom_collate_fn(batch):
-        batch = [item for item in batch if item is not None]
-        return torch.utils.data.dataloader.default_collate(batch) if batch else None
-
     test_data_path = os.path.join(args.dataset_path, 'test')
     test_dataset = ImageFolder(root=test_data_path, dataset_name=args.dataset_name, args=args, split='test')
     if len(test_dataset) == 0:
@@ -138,18 +127,14 @@ def main():
         sys.exit(1)
     test_loader = DataLoader(
         test_dataset, batch_size=1, shuffle=False,
-        num_workers=args.num_workers, collate_fn=custom_collate_fn
+        num_workers=args.num_workers,
+        collate_fn=lambda b: torch.utils.data.dataloader.default_collate([x for x in b if x is not None])
     )
 
     # --- Run Visualization ---
     output_dir = os.path.join(config.CKPT_ROOT, args.exp_name, f"fold_{args.fold}", "xai_visualizations", args.method)
     check_mkdir(output_dir)
     print(f"Saving visualizations to: {output_dir}")
-
-    mean = [0.485, 0.456, 0.406]
-    std = [0.229, 0.224, 0.225]
-    if args.dataset_name in ['JSRT', 'COVID19_Radiography']:
-        mean, std = [0.5], [0.5]
 
     for i, sample in enumerate(tqdm(test_loader, desc=f"Generating {args.method.upper()} maps")):
         if i >= args.num_images: break
@@ -158,31 +143,38 @@ def main():
         image_tensor = sample['image'].to(device)
         image_name = sample.get('name', [f'image_{i}'])[0]
 
+        # Prepare image for visualization
         rgb_img_tensor = image_tensor.clone().squeeze(0).cpu()
-        if rgb_img_tensor.shape[0] == 1:
-            rgb_img_tensor = rgb_img_tensor.repeat(3, 1, 1)
-
-        rgb_img_denorm = denormalize(rgb_img_tensor, mean, std)
-        rgb_img_np = np.transpose(rgb_img_denorm.numpy(), (1, 2, 0))
-        rgb_img_np = np.clip(rgb_img_np, 0, 1)
-
+        if rgb_img_tensor.shape[0] == 1: rgb_img_tensor = rgb_img_tensor.repeat(3, 1, 1)
+        mean = [0.5] if args.dataset_name in ['JSRT', 'COVID19_Radiography'] else [0.485, 0.456, 0.406]
+        std = [0.5] if args.dataset_name in ['JSRT', 'COVID19_Radiography'] else [0.229, 0.224, 0.225]
+        rgb_img_np = np.clip(np.transpose(denormalize(rgb_img_tensor, mean, std).numpy(), (1, 2, 0)), 0, 1)
+        
         targets = [SemanticSegmentationTarget(args.target_class, (sample['label'].squeeze().numpy() == args.target_class).astype(np.float32))]
 
-        # The call to generate the CAM is now simple and universal.
-        grayscale_cam = cam(input_tensor=image_tensor,
-                            targets=targets,
-                            aug_smooth=True,
-                            eigen_smooth=True)[0, :]
+        # ----- FINAL, CORRECTED CONDITIONAL LOGIC FOR THE CAM CALL -----
+        call_kwargs = {'input_tensor': image_tensor, 'targets': targets}
+
+        # Suppress internal progress bars for specific methods
+        if args.method in ['scorecam', 'ablationcam', 'layercam']:
+            call_kwargs['show_progress'] = False
+
+        # Disable smoothing for HiResCAM to respect its faithfulness guarantees
+        if args.method == 'hirescam':
+            call_kwargs['eigen_smooth'] = False
+            call_kwargs['aug_smooth'] = False
+        else:
+            call_kwargs['eigen_smooth'] = True
+            call_kwargs['aug_smooth'] = True
+            
+        grayscale_cam = cam(**call_kwargs)[0, :]
+        # -----------------------------------------------------------------
 
         cam_image = show_cam_on_image(rgb_img_np, grayscale_cam, use_rgb=True)
 
         fig, axes = plt.subplots(1, 2, figsize=(12, 6))
-        axes[0].imshow(rgb_img_np)
-        axes[0].set_title(f"Original: {os.path.basename(image_name)}")
-        axes[0].axis('off')
-        axes[1].imshow(cam_image)
-        axes[1].set_title(f"{args.method.upper()} Overlay")
-        axes[1].axis('off')
+        axes[0].imshow(rgb_img_np); axes[0].set_title(f"Original: {os.path.basename(image_name)}"); axes[0].axis('off')
+        axes[1].imshow(cam_image); axes[1].set_title(f"{args.method.upper()} Overlay"); axes[1].axis('off')
 
         plt.tight_layout()
         save_path = os.path.join(output_dir, f"{os.path.splitext(os.path.basename(image_name))[0]}_{args.method}.png")
