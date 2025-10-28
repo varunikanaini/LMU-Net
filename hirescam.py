@@ -1,4 +1,4 @@
-# /kaggle/working/ARAA-Net/hires_cam_explain.py (Final)
+# /kaggle/working/ARAA-Net/hires_cam_explain.py (Final Corrected Version)
 
 import torch
 import numpy as np
@@ -67,20 +67,17 @@ def get_args():
 
 # --- Core XAI Logic (Corrected) ---
 def generate_hires_cam_explanations(model, loader, device, args):
-    # --- FINAL FIX: Target the correct Conv2d layer by its specific index ---
     if args.target_layer == 'bottleneck':
-        # Target the last Conv2d inside the final Conv2dNormActivation of the bottleneck
         target_layer = model.bottleneck_layer[-1][0]
     elif args.target_layer == 'encoder4':
-        # Target the final pointwise projection Conv2d layer in the last InvertedResidual block of encoder4
-        # This layer is at index [2] of the block's internal .conv sequence.
         target_layer = model.encoder4[-2].conv[2]
     else:
         raise ValueError(f"Invalid target layer: {args.target_layer}")
 
     print(f"Using target layer for HiResCAM: {target_layer}")
 
-    cam = HiResCAM(model=model, target_layers=[target_layer], use_cuda=(device.type == 'cuda'))
+    # --- FINAL FIX: Removed the outdated 'use_cuda' argument ---
+    cam = HiResCAM(model=model, target_layers=[target_layer])
     
     output_dir = os.path.join(config.CKPT_ROOT, args.exp_name, f"fold_{args.fold}", "hires_cam_explanations")
     check_mkdir(output_dir)
