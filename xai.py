@@ -1,4 +1,4 @@
-# /kaggle/working/LMU-Net/xai.py (Corrected to hide internal progress bar)
+# /kaggle/working/LMU-Net/xai.py (Final Corrected Version)
 
 import torch
 import numpy as np
@@ -84,8 +84,7 @@ def get_args():
 
 def main():
     args = get_args()
-    use_cuda = torch.cuda.is_available()
-    device = torch.device("cuda" if use_cuda else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
     # --- Load Model ---
@@ -115,11 +114,13 @@ def main():
         'eigengradcam': EigenGradCAM, 'layercam': LayerCAM, 'fullgrad': FullGrad
     }
     
+    # ----- THE UNIVERSAL FIX IS HERE -----
+    # SIMPLIFIED and CORRECTED INITIALIZATION:
+    # We remove the problematic 'use_cuda' argument entirely. The library will
+    # correctly infer the device from the model and input tensors, which is the
+    # modern and robust way to use it. This single line works for ALL methods.
     cam_class = cam_algorithm[args.method]
-    if args.method in ['scorecam', 'ablationcam', 'eigencam']:
-        cam = cam_class(model=model_wrapper, target_layers=target_layers)
-    else:
-        cam = cam_class(model=model_wrapper, target_layers=target_layers, use_cuda=use_cuda)
+    cam = cam_class(model=model_wrapper, target_layers=target_layers)
 
     # --- Load Dataset ---
     def custom_collate_fn(batch):
@@ -163,8 +164,6 @@ def main():
 
         targets = [SemanticSegmentationTarget(args.target_class, (sample['label'].squeeze().numpy() == args.target_class).astype(np.float32))]
         
-        # ----- THE CHANGE IS HERE -----
-        # Added show_progress=False to suppress the internal progress bar
         grayscale_cam = cam(input_tensor=image_tensor, targets=targets, aug_smooth=True, eigen_smooth=True, show_progress=False)[0, :]
         
         cam_image = show_cam_on_image(rgb_img_np, grayscale_cam, use_rgb=True)
