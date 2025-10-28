@@ -1,4 +1,4 @@
-# /kaggle/working/LMU-Net/xai.py (Corrected)
+# /kaggle/working/LMU-Net/xai.py (Corrected to hide internal progress bar)
 
 import torch
 import numpy as np
@@ -32,26 +32,14 @@ from pytorch_grad_cam.utils.image import show_cam_on_image
 # --- Helper Classes ---
 
 class SegmentationModelOutputWrapper(torch.nn.Module):
-    """
-    Wrapper for the segmentation model to ensure that the CAM library
-    only receives the final output tensor, not a tuple of auxiliary outputs.
-    """
     def __init__(self, model):
         super(SegmentationModelOutputWrapper, self).__init__()
         self.model = model
 
     def forward(self, x):
-        # The LMU-Net returns a tuple of outputs for deep supervision.
-        # We only want the final, full-resolution output for CAM.
         return self.model(x)[-1]
 
 class SemanticSegmentationTarget:
-    """
-    Target for semantic segmentation.
-    The CAM will be computed for the specified category,
-    but only for the pixels that are part of the ground truth mask.
-    This helps in explaining why the model correctly identified these pixels.
-    """
     def __init__(self, category, mask):
         self.category = category
         self.mask = torch.from_numpy(mask)
@@ -59,15 +47,10 @@ class SemanticSegmentationTarget:
             self.mask = self.mask.cuda()
 
     def __call__(self, model_output):
-        # We want to aggregate the model's output for the target category
-        # only over the area of the ground truth mask.
         return (model_output[self.category, :, :] * self.mask).sum()
-
 
 # --- Helper Functions ---
 def denormalize(tensor, mean, std):
-    """Denormalizes a tensor image with mean and standard deviation."""
-    # Handle both single-channel (grayscale) and 3-channel images
     if tensor.shape[0] == 1 and len(mean) == 3:
         mean, std = [mean[0]], [std[0]]
     elif tensor.shape[0] == 3 and len(mean) == 1:
@@ -123,7 +106,6 @@ def main():
     model.to(device).eval()
     
     # --- CAM Setup ---
-    # Wrap the model to handle its tuple output
     model_wrapper = SegmentationModelOutputWrapper(model)
     target_layers = [model.bottleneck_layer]
 
@@ -133,7 +115,6 @@ def main():
         'eigengradcam': EigenGradCAM, 'layercam': LayerCAM, 'fullgrad': FullGrad
     }
     
-    # CORRECTED INITIALIZATION: Conditionally pass 'use_cuda'
     cam_class = cam_algorithm[args.method]
     if args.method in ['scorecam', 'ablationcam', 'eigencam']:
         cam = cam_class(model=model_wrapper, target_layers=target_layers)
@@ -182,7 +163,10 @@ def main():
 
         targets = [SemanticSegmentationTarget(args.target_class, (sample['label'].squeeze().numpy() == args.target_class).astype(np.float32))]
         
-        grayscale_cam = cam(input_tensor=image_tensor, targets=targets, aug_smooth=True, eigen_smooth=True)[0, :]
+        # ----- THE CHANGE IS HERE -----
+        # Added show_progress=False to suppress the internal progress bar
+        grayscale_cam = cam(input_tensor=image_tensor, targets=targets, aug_smooth=True, eigen_smooth=True, show_progress=False)[0, :]
+        
         cam_image = show_cam_on_image(rgb_img_np, grayscale_cam, use_rgb=True)
         
         fig, axes = plt.subplots(1, 2, figsize=(12, 6))
