@@ -52,10 +52,11 @@ def get_args():
 
 # --- Core XAI Logic (Corrected) ---
 def generate_grad_cam_explanations(model, loader, device, args):
-    target_layer = model.bottleneck_layer[-1].conv
+    # --- FIX: Access the Conv2d layer by index [0] ---
+    target_layer = model.bottleneck_layer[-1][0]
+    
     cam = GradCAM(model=model, target_layers=[target_layer], use_cuda=(device.type == 'cuda'))
     
-    # --- FIX: Use underscore instead of hyphen ---
     output_dir = os.path.join(config.CKPT_ROOT, args.exp_name, f"fold_{args.fold}", "grad_cam_explanations")
     check_mkdir(output_dir)
     print(f"Saving Grad-CAM visualizations to: {output_dir}")
@@ -93,15 +94,13 @@ def generate_grad_cam_explanations(model, loader, device, args):
 
     print("\nGrad-CAM generation complete.")
 
-# --- Main Execution (Corrected) ---
+# --- Main Execution (Unchanged) ---
 if __name__ == '__main__':
     args = get_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
     model = Light_LASA_Unet(num_classes=args.num_classes, lasa_kernels=config.DEFAULT_ARGS.get('lasa_kernels')).to(device)
-    
-    # --- FIX: Use underscore instead of hyphen ---
     checkpoint_path = os.path.join(config.CKPT_ROOT, args.exp_name, f"fold_{args.fold}", 'best_checkpoint.pth')
     
     if not os.path.exists(checkpoint_path):
