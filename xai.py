@@ -88,7 +88,7 @@ def main():
     print(f"Using device: {device}")
 
     # --- Load Model ---
-    model = Light_LAS_Unet(num_classes=args.num_classes, lasa_kernels=args.lasa_kernels)
+    model = Light_LASA_Unet(num_classes=args.num_classes, lasa_kernels=args.lasa_kernels)
     
     # ----- THE TYPO FIX IS HERE -----
     # Changed args.exp-name to args.exp_name
