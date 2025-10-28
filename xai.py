@@ -1,4 +1,4 @@
-# /kaggle/working/LMU-Net/xai.py (Final Corrected Version)
+# /kaggle/working/LMU-Net/xai.py (Final Robust Version)
 
 import torch
 import numpy as np
@@ -90,11 +90,11 @@ def main():
     # --- Load Model ---
     model = Light_LASA_Unet(num_classes=args.num_classes, lasa_kernels=args.lasa_kernels)
     checkpoint_path = os.path.join(config.CKPT_ROOT, args.exp_name, f"fold_{args.fold}", 'best_checkpoint.pth')
-    
+
     if not os.path.exists(checkpoint_path):
         print(f"Error: Checkpoint not found at {checkpoint_path}")
         sys.exit(1)
-        
+
     try:
         model.load_state_dict(torch.load(checkpoint_path, map_location=device))
         print(f"Model loaded successfully from {checkpoint_path}")
@@ -103,7 +103,7 @@ def main():
         sys.exit(1)
 
     model.to(device).eval()
-    
+
     # --- CAM Setup ---
     model_wrapper = SegmentationModelOutputWrapper(model)
     target_layers = [model.bottleneck_layer]
@@ -114,13 +114,17 @@ def main():
         'eigengradcam': EigenGradCAM, 'layercam': LayerCAM, 'fullgrad': FullGrad
     }
     
-    # ----- THE UNIVERSAL FIX IS HERE -----
-    # SIMPLIFIED and CORRECTED INITIALIZATION:
-    # We remove the problematic 'use_cuda' argument entirely. The library will
-    # correctly infer the device from the model and input tensors, which is the
-    # modern and robust way to use it. This single line works for ALL methods.
+    # ----- THE FINAL, CORRECTED INITIALIZATION LOGIC -----
     cam_class = cam_algorithm[args.method]
-    cam = cam_class(model=model_wrapper, target_layers=target_layers)
+    
+    # Define common arguments for the constructor
+    cam_kwargs = {"model": model_wrapper, "target_layers": target_layers}
+    
+    # Add 'show_progress' to the CONSTRUCTOR arguments only for the methods that support it
+    if args.method in ['scorecam', 'ablationcam', 'layercam']:
+        cam_kwargs["show_progress"] = False
+        
+    cam = cam_class(**cam_kwargs)
 
     # --- Load Dataset ---
     def custom_collate_fn(batch):
@@ -153,21 +157,25 @@ def main():
 
         image_tensor = sample['image'].to(device)
         image_name = sample.get('name', [f'image_{i}'])[0]
-        
+
         rgb_img_tensor = image_tensor.clone().squeeze(0).cpu()
         if rgb_img_tensor.shape[0] == 1:
             rgb_img_tensor = rgb_img_tensor.repeat(3, 1, 1)
-        
+
         rgb_img_denorm = denormalize(rgb_img_tensor, mean, std)
         rgb_img_np = np.transpose(rgb_img_denorm.numpy(), (1, 2, 0))
         rgb_img_np = np.clip(rgb_img_np, 0, 1)
 
         targets = [SemanticSegmentationTarget(args.target_class, (sample['label'].squeeze().numpy() == args.target_class).astype(np.float32))]
-        
-        grayscale_cam = cam(input_tensor=image_tensor, targets=targets, aug_smooth=True, eigen_smooth=True, show_progress=False)[0, :]
-        
+
+        # The call to generate the CAM is now simple and universal.
+        grayscale_cam = cam(input_tensor=image_tensor,
+                            targets=targets,
+                            aug_smooth=True,
+                            eigen_smooth=True)[0, :]
+
         cam_image = show_cam_on_image(rgb_img_np, grayscale_cam, use_rgb=True)
-        
+
         fig, axes = plt.subplots(1, 2, figsize=(12, 6))
         axes[0].imshow(rgb_img_np)
         axes[0].set_title(f"Original: {os.path.basename(image_name)}")
