@@ -1,4 +1,4 @@
-# /kaggle/working/ARAA-Net/hires_cam_explain.py
+# /kaggle/working/ARAA-Net/hires_cam_explain.py (Final)
 
 import torch
 import numpy as np
@@ -23,11 +23,10 @@ from datasets import ImageFolder
 from misc import check_mkdir
 
 # --- Grad-CAM Imports ---
-# --- NEW: Using HiResCAM for sharper results ---
 from pytorch_grad_cam import HiResCAM
 from pytorch_grad_cam.utils.image import show_cam_on_image
 
-# --- Custom Target for Segmentation Models (Corrected and Final) ---
+# --- Custom Target for Segmentation Models (Unchanged) ---
 class SegmentationClassTarget:
     def __init__(self, category):
         self.category = category
@@ -49,7 +48,7 @@ def denormalize(tensor, mean, std):
         t.mul_(s).add_(m)
     return tensor
 
-# --- Argument Parsing (Updated) ---
+# --- Argument Parsing (Unchanged) ---
 def get_args():
     parser = argparse.ArgumentParser(description='Generate High-Resolution CAM Explanations')
     parser.add_argument('--exp-name', type=str, required=True, help='Name of the experiment folder in ./ckpt')
@@ -59,30 +58,30 @@ def get_args():
     parser.add_argument('--scale-h', type=int, default=512, help='Target height for image resizing.')
     parser.add_argument('--scale-w', type=int, default=512, help='Target width for image resizing.')
     parser.add_argument('--target-class', type=int, default=1, help='The class index to explain (e.g., 1 for epiphysis).')
-    # --- NEW: Argument to control the target layer for explanation ---
     parser.add_argument('--target-layer', type=str, default='encoder4', choices=['encoder4', 'bottleneck'],
                         help='The encoder layer to target for CAM generation. "encoder4" is often sharper.')
-
     args = parser.parse_args()
     dataset_info = config.DATASET_CONFIG[args.dataset_name]
     args.dataset_path, args.num_classes = dataset_info['path'], dataset_info['num_classes']
     return args
 
-# --- Core XAI Logic (Updated for HiResCAM) ---
+# --- Core XAI Logic (Corrected) ---
 def generate_hires_cam_explanations(model, loader, device, args):
-    # --- Select the target layer based on the new argument ---
+    # --- FIX: Precisely target the last Conv layer in the chosen block ---
     if args.target_layer == 'bottleneck':
-        # The deepest layer, good for semantic context but can be blurry
+        # Target the last Conv2d inside the final Conv2dNormActivation of the bottleneck
         target_layer = model.bottleneck_layer[-1][0]
     elif args.target_layer == 'encoder4':
-        # A slightly shallower layer with higher resolution, often better for sharp CAMs
-        target_layer = model.encoder4[-1][0]
+        # Target the last Conv2d inside the last InvertedResidual block of encoder4 (before the SEBlock)
+        # model.encoder4[-2] gets the InvertedResidual block
+        # .conv[-1] gets the final Conv2dNormActivation in that block
+        # [0] gets the Conv2d layer itself
+        target_layer = model.encoder4[-2].conv[-1][0]
     else:
         raise ValueError(f"Invalid target layer: {args.target_layer}")
 
-    print(f"Using target layer for HiResCAM: {args.target_layer}")
+    print(f"Using target layer for HiResCAM: {target_layer}")
 
-    # --- Use HiResCAM instead of GradCAM ---
     cam = HiResCAM(model=model, target_layers=[target_layer], use_cuda=(device.type == 'cuda'))
     
     output_dir = os.path.join(config.CKPT_ROOT, args.exp_name, f"fold_{args.fold}", "hires_cam_explanations")
@@ -101,7 +100,7 @@ def generate_hires_cam_explanations(model, loader, device, args):
         image_name = sample.get('name', [f'image_{i}'])[0]
 
         targets = [SegmentationClassTarget(args.target_class)]
-        grayscale_cam = cam(input_tensor=input_tensor, targets=targets)[0, :] # aug_smooth and eigen_smooth are not typically used with HiResCAM
+        grayscale_cam = cam(input_tensor=input_tensor, targets=targets)[0, :]
         
         original_img = denormalize(input_tensor.clone().squeeze(0).cpu(), mean, std)
         original_img = np.transpose(original_img.numpy(), (1, 2, 0))
@@ -122,7 +121,7 @@ def generate_hires_cam_explanations(model, loader, device, args):
 
     print("\nHiResCAM generation complete.")
 
-# --- Main Execution ---
+# --- Main Execution (Unchanged) ---
 if __name__ == '__main__':
     args = get_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
