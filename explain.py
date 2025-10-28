@@ -54,8 +54,8 @@ def get_args():
 def generate_grad_cam_explanations(model, loader, device, args):
     # --- FIX: Access the Conv2d layer by index [0] ---
     target_layer = model.bottleneck_layer[-1][0]
-    
-    cam = GradCAM(model=model, target_layers=[target_layer], use_cuda=(device.type == 'cuda'))
+    # New, correct line
+    cam = GradCAM(model=model, target_layers=[target_layer])
     
     output_dir = os.path.join(config.CKPT_ROOT, args.exp_name, f"fold_{args.fold}", "grad_cam_explanations")
     check_mkdir(output_dir)
