@@ -21,7 +21,10 @@
 --dice-loss-weight 1.2 \
 --scheduler-type 'CosineAnnealingWarmRestarts' \
 --scheduler-T0 15 \
---num-workers 4
+--num-workers 4 \
+--boundary-loss-weight 1.5 \
+--scale-h 256 \
+--scale-w 256
 
 ```
 

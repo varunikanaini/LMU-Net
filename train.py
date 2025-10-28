@@ -12,6 +12,7 @@ project_path = '/kaggle/working/LMU-Net'
 if project_path not in sys.path: sys.path.insert(0, project_path)
 
 import config
+# This now correctly handles multiple backbones
 from light_lasa_unet import Light_LASA_Unet
 from datasets import ImageFolder, make_dataset
 from seg_utils import ConfusionMatrix
@@ -51,11 +52,12 @@ def create_boundary_mask(labels):
         boundary_masks.append(boundary)
     return torch.from_numpy(np.array(boundary_masks)).float().unsqueeze(1).to(labels.device)
 
-# --- Argument Parsing --- 
+# --- Argument Parsing ---
 def get_args():
     parser = argparse.ArgumentParser(description='Train Segmentation Models')
     parser.add_argument('--dataset-name', type=str, required=True, choices=list(config.DATASET_CONFIG.keys()))
-    parser.add_argument('--backbone', type=str, default='vgg19', choices=list(config.BACKBONE_CHANNELS.keys()))
+    # Updated to include mobilenet_v2 in choices
+    parser.add_argument('--backbone', type=str, default='vgg19', choices=list(config.BACKBONE_CHANNELS.keys()) + ['mobilenet_v2'])
     parser.add_argument('--epochs', type=int, default=150)
     parser.add_argument('--batch-size', type=int, default=8)
     parser.add_argument('--lr', type=float, default=1e-4)
@@ -89,10 +91,10 @@ def get_args():
         if not hasattr(args, k): setattr(args, k, v)
     return args
 
-# --- Logging and Collate --- 
+# --- Logging and Collate ---
 def setup_logging(log_dir, filename='training.log'):
     for h in logging.root.handlers[:]: logging.root.removeHandler(h)
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s', 
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s',
                         handlers=[logging.FileHandler(os.path.join(log_dir, filename)), logging.StreamHandler()])
 
 def custom_collate_fn(batch):
@@ -115,18 +117,16 @@ def evaluate_model(net, data_loader, device, focal_loss_fn, dice_loss_fn, args, 
                 total_loss += args.deep_supervision_weights[i] * ((args.focal_loss_weight * f_l) + (args.dice_loss_weight * d_l))
             loss_recorder.update(total_loss.item(), inputs.size(0))
             confmat.update(labels.flatten(), outputs[-1].argmax(1).flatten())
-            
-    # Unpack all metrics from the confusion matrix
+
     oa, _, iou, fwiou, dice = confmat.compute()
     miou = iou.mean().item()
-    oa = oa.item()  # convert to float
+    oa = oa.item()
 
-    # Log all the metrics
     logging.info(f"--- {mode} Summary --- Loss: {loss_recorder.avg:.4f}, OA: {oa:.4f}, mIoU: {miou:.4f}, FW-IoU: {fwiou.item():.4f}, Dice: {dice:.4f}")
 
-    if mode.startswith("Validating"):  # Make it more robust for "Validating Fold X"
+    if mode.startswith("Validating"):
         net.train()
-        
+
     return oa, miou, fwiou.item(), dice
 
 # --- Testing Function ---
@@ -134,19 +134,23 @@ def test(args):
     device = torch.device("cuda")
     exp_name = f"{args.backbone}_FreezeTune_LASA_{args.dataset_name.replace('TSRS_RSNA-', '').lower()}"
     base_exp_path = os.path.join(config.CKPT_ROOT, exp_name)
-    
+
     setup_logging(base_exp_path, 'main_training_log.log')
     logging.info("\n" + "="*50 + "\n" + " " * 20 + "STARTING TESTING" + "\n" + "="*50)
 
     test_ds = ImageFolder(os.path.join(args.dataset_path, 'test'), args.dataset_name, args, 'test')
     test_loader = DataLoader(test_ds, batch_size=1, shuffle=False, num_workers=args.num_workers, collate_fn=custom_collate_fn)
-    
-    if args.backbone == 'mobilenet_v2':
-        net = Light_LASA_Unet(num_classes=args.num_classes, lasa_kernels=args.lasa_kernels).to(device)
-    else:
-        print("Error: Testing currently only supports 'mobilenet_v2' backbone.")
-        
-    focal_loss_fn = FocalLoss(alpha=args.focal_alpha, gamma=args.focal_gamma).to(device)
+
+    # --- ADJUSTED: Model instantiation now handles all backbones ---
+    net = Light_LASA_Unet(
+        num_classes=args.num_classes,
+        backbone_name=args.backbone,
+        lasa_kernels=args.lasa_kernels
+    ).to(device)
+    logging.info(f"Successfully instantiated Light_LASA_Unet with backbone: {args.backbone}")
+
+
+    focal_loss_fn = FocalLoss(alpha=config.FOCAL_ALPHA, gamma=config.FOCAL_GAMMA).to(device)
     dice_loss_fn = DiceLoss().to(device)
 
     all_fold_metrics = {'oa': [], 'miou': [], 'fwiou': [], 'dice': []}
@@ -164,14 +168,14 @@ def test(args):
         net.load_state_dict(torch.load(ckpt_path, map_location=device))
 
         oa, miou, fwiou, dice = evaluate_model(net, test_loader, device, focal_loss_fn, dice_loss_fn, args, mode=f"Testing Fold {fold_idx}")
-        
+
         all_fold_metrics['oa'].append(oa)
         all_fold_metrics['miou'].append(miou)
         all_fold_metrics['fwiou'].append(fwiou)
         all_fold_metrics['dice'].append(dice)
 
     logging.info("\n" + "="*50 + "\n" + " " * 15 + "FINAL TESTING SUMMARY" + "\n" + "="*50)
-    
+
     if not all_fold_metrics['miou']:
         logging.error("No models were tested. Cannot compute final metrics.")
         return
@@ -191,26 +195,30 @@ def train_fold(args, fold_idx, train_imgs, val_imgs):
     setup_logging(fold_exp_path, f'fold_{fold_idx}_training.log')
 
     logging.info(f"===== Starting Fold {fold_idx}/{args.k_folds if args.k_folds > 1 else 1} =====")
-    
+
     train_ds = ImageFolder(root=None, dataset_name=args.dataset_name, args=args, split='train', imgs=train_imgs)
     val_ds = ImageFolder(root=None, dataset_name=args.dataset_name, args=args, split='val', imgs=val_imgs)
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, collate_fn=custom_collate_fn)
     val_loader = DataLoader(val_ds, batch_size=1, shuffle=False, num_workers=args.num_workers, collate_fn=custom_collate_fn)
 
-    if args.backbone == 'mobilenet_v2':
-        net = Light_LASA_Unet(num_classes=args.num_classes, lasa_kernels=args.lasa_kernels).to(device)
-    else:
-        print("Error: Training currently only supports 'mobilenet_v2' backbone.")
-    
-    focal_loss_fn = FocalLoss(alpha=args.focal_alpha, gamma=args.focal_gamma).to(device)
+    # --- ADJUSTED: Model instantiation now handles all backbones ---
+    net = Light_LASA_Unet(
+        num_classes=args.num_classes,
+        backbone_name=args.backbone,
+        lasa_kernels=args.lasa_kernels
+    ).to(device)
+    logging.info(f"Successfully instantiated Light_LASA_Unet with backbone: {args.backbone}")
+
+
+    focal_loss_fn = FocalLoss(alpha=config.FOCAL_ALPHA, gamma=config.FOCAL_GAMMA).to(device)
     dice_loss_fn = DiceLoss().to(device)
     optimizer = optim.Adam(net.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=args.scheduler_T0, T_mult=2, eta_min=1e-6) if args.scheduler_type == 'CosineAnnealingWarmRestarts' else optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', patience=args.scheduler_patience)
-    
+
     start_epoch, best_mIoU, patience_counter = 0, 0.0, 0
     best_ckpt_path = os.path.join(fold_exp_path, 'best_checkpoint.pth')
     latest_ckpt_path = os.path.join(fold_exp_path, 'latest_checkpoint.pth')
-    
+
     if args.resume and os.path.exists(latest_ckpt_path):
         try:
             ckpt = torch.load(latest_ckpt_path, map_location=device)
@@ -235,11 +243,11 @@ def train_fold(args, fold_idx, train_imgs, val_imgs):
             optimizer = optim.Adam(net.parameters(), lr=new_lr, weight_decay=args.weight_decay)
             scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=args.scheduler_T0, T_mult=2, eta_min=1e-6)
             logging.info(f"--- Switched to Phase 2. New LR: {new_lr} ---")
-            
+
         net.train()
         loss_recorder = AvgMeter()
         train_iterator = tqdm(train_loader, desc=f"Epoch {epoch+1}/{args.epochs} (Fold {fold_idx})")
-        
+
         for data in train_iterator:
             if data is None: continue
             inputs, labels = data['image'].to(device), data['label'].to(device)
@@ -260,12 +268,12 @@ def train_fold(args, fold_idx, train_imgs, val_imgs):
             optimizer.step()
             loss_recorder.update(total_loss.item(), inputs.size(0))
             train_iterator.set_postfix(loss=loss_recorder.avg)
-        
+
         _, current_mIoU, _, _ = evaluate_model(net, val_loader, device, focal_loss_fn, dice_loss_fn, args, mode=f"Validating Fold {fold_idx}")
-        
+
         if isinstance(scheduler, optim.lr_scheduler.ReduceLROnPlateau): scheduler.step(current_mIoU)
         else: scheduler.step()
-        
+
         if current_mIoU > best_mIoU:
             best_mIoU, patience_counter = current_mIoU, 0
             torch.save(net.state_dict(), best_ckpt_path)
@@ -273,19 +281,19 @@ def train_fold(args, fold_idx, train_imgs, val_imgs):
         else:
             patience_counter += 1
             logging.info(f"⚠️ mIoU did not improve for {patience_counter} epoch(s). Best: {best_mIoU:.4f}")
-        
+
         torch.save({'epoch': epoch, 'model_state_dict': net.state_dict(), 'optimizer_state_dict': optimizer.state_dict(), 'scheduler_state_dict': scheduler.state_dict(), 'best_mIoU': best_mIoU, 'patience_counter': patience_counter}, latest_ckpt_path)
 
         if patience_counter >= args.patience:
             logging.info(f"Early stopping triggered for fold {fold_idx}.")
             break
-            
+
     logging.info(f"===== Finished Fold {fold_idx} ===== Best Val mIoU: {best_mIoU:.4f}")
     return best_mIoU
 
 def main():
     args = get_args()
-    
+
     if args.test_only:
         test(args)
         return
@@ -293,7 +301,7 @@ def main():
     exp_name = f"{args.backbone}_FreezeTune_LASA_{args.dataset_name.replace('TSRS_RSNA-', '').lower()}"
     base_exp_path = os.path.join(config.CKPT_ROOT, exp_name)
     check_mkdir(base_exp_path)
-    
+
     setup_logging(base_exp_path, 'main_training_log.log')
     logging.info(f"Starting experiment: '{exp_name}'\nArguments: {vars(args)}")
 
