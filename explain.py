@@ -26,25 +26,30 @@ from misc import check_mkdir
 from pytorch_grad_cam import GradCAM
 from pytorch_grad_cam.utils.image import show_cam_on_image
 
-# --- NEW: Custom Target for Segmentation Models ---
+# --- CORRECTED: Robust Custom Target for Segmentation Models ---
 class SegmentationClassTarget:
     """
-    A target class for Grad-CAM on segmentation models.
-    This tells Grad-CAM to use the activations of a specific class
-    across the entire spatial map as the target for backpropagation.
+    A target class for Grad-CAM on segmentation models. This is now robust
+    to handle both 4D (batched) and 3D (squeezed) model outputs.
     """
     def __init__(self, category):
         self.category = category
 
     def __call__(self, model_output):
-        # The model returns a tuple of outputs (due to deep supervision).
-        # We must select the final, main output for our explanation.
+        # The model returns a tuple, we select the final output.
         final_output = model_output[-1]
-        
-        # We are working with a batch size of 1, so we select the first element.
-        # Then, we select the channel corresponding to our target category.
-        # The result is a 2D map of activations for our class.
-        return final_output[0, self.category, :, :]
+
+        # --- THE FIX ---
+        # Check the number of dimensions of the output tensor.
+        if len(final_output.shape) == 4:
+            # This is the standard (B, C, H, W) case. We use the first batch element.
+            return final_output[0, self.category, :, :]
+        elif len(final_output.shape) == 3:
+            # This is the squeezed (C, H, W) case, which caused the error.
+            return final_output[self.category, :, :]
+        else:
+            # Raise an error for unexpected shapes.
+            raise ValueError(f"Expected model output to have 3 or 4 dimensions, but got {len(final_output.shape)}")
 
 # ... (Helper 'denormalize' and 'get_args' functions remain the same) ...
 def denormalize(tensor, mean, std):
@@ -88,7 +93,7 @@ def generate_grad_cam_explanations(model, loader, device, args):
         input_tensor = sample['image'].to(device)
         image_name = sample.get('name', [f'image_{i}'])[0]
 
-        # --- FIX: Use our new, simpler target class ---
+        # Use our new, robust target class
         targets = [SegmentationClassTarget(args.target_class)]
 
         grayscale_cam = cam(input_tensor=input_tensor, targets=targets, aug_smooth=True, eigen_smooth=True)[0, :]
