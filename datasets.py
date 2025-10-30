@@ -48,12 +48,11 @@ def make_dataset(root, dataset_name, split='train', val_size=0.15, test_size=0.1
 
     # --- Logic for Flat Datasets that need Splitting ---
     elif structure == 'FLAT_SPLIT':
-        # --- Gather all image-mask pairs based on dataset-specific paths ---
         if dataset_name == 'JSRT':
-            # --- FIX: Removed the '/content/' part from the path to match your file structure ---
-            image_dir = os.path.join(root, 'jsrt', 'cxr')
-            mask_dir = os.path.join(root, 'jsrt', 'masks')
-            # ----------------------------------------------------------------------------------
+            # --- FIX: The 'cxr' and 'masks' folders are directly inside the root path, not in an additional 'jsrt' subfolder.
+            image_dir = os.path.join(root, 'cxr')
+            mask_dir = os.path.join(root, 'masks')
+            # ----------------------------------------------------------------------------------------------------------------
             if os.path.exists(image_dir) and os.path.exists(mask_dir):
                 img_names = [os.path.splitext(f)[0] for f in os.listdir(image_dir) if f.lower().endswith('.png')]
                 for name in img_names:
@@ -67,8 +66,6 @@ def make_dataset(root, dataset_name, split='train', val_size=0.15, test_size=0.1
                 for name in img_names:
                     all_pairs.append((os.path.join(image_dir, name + '.tif'), os.path.join(mask_dir, name + '.tif')))
 
-        # Add elif blocks here for 'COVID19_Radiography', 'DentalPanoramic', 'SixDiseasesChestXRay' following the same pattern
-        # Example for DentalPanoramic:
         elif dataset_name == 'DentalPanoramic':
             image_dir = os.path.join(root, 'images')
             mask_dir = os.path.join(root, 'segmentation_1')
@@ -77,18 +74,16 @@ def make_dataset(root, dataset_name, split='train', val_size=0.15, test_size=0.1
                 for name in img_names:
                     all_pairs.append((os.path.join(image_dir, name + '.jpg'), os.path.join(mask_dir, name + '.png')))
 
-        # --- Perform the split ---
         if not all_pairs:
             print(f"Warning: Found 0 image-mask pairs for '{dataset_name}' at root '{root}'.")
             return []
 
-        # First split: separate out the test set
         train_val_pairs, test_pairs = train_test_split(all_pairs, test_size=test_size, random_state=random_state)
-
-        # Second split: separate train and validation from the remainder
-        # Adjust validation size to be proportional to the remaining data
         val_proportion = val_size / (1 - test_size)
         train_pairs, val_pairs = train_test_split(train_val_pairs, test_size=val_proportion, random_state=random_state)
+
+        print(f"Dataset '{dataset_name}': {len(all_pairs)} total images -> "
+              f"{len(train_pairs)} train, {len(val_pairs)} val, {len(test_pairs)} test.")
 
         if split == 'train':
             return train_pairs
@@ -112,7 +107,6 @@ class ImageFolder(data.Dataset):
         if imgs is not None:
             self.imgs = imgs
         else:
-            # This line in your original code had a bug, it should pass the split
             self.imgs = make_dataset(self.root, self.dataset_name, self.split)
 
         if not self.imgs:
