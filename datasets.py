@@ -26,18 +26,15 @@ def make_dataset(root, dataset_name, split='train', val_size=0.15, test_size=0.1
     structure = dataset_config.get('structure')
     all_pairs = []
 
-    # --- Logic for Pre-split Datasets ---
     if structure == 'TSRS_RSNA':
         split_root = os.path.join(root, split)
         if not os.path.exists(split_root):
             print(f"Warning: Directory not found for pre-split dataset: {split_root}")
             return []
-
         mask_dir = os.path.join(split_root + '_labels')
         if not os.path.exists(mask_dir):
             print(f"Warning: Mask directory not found: {mask_dir}")
             return []
-
         img_names = [os.path.splitext(f)[0] for f in os.listdir(split_root) if f.lower().endswith(IMAGE_EXTENSIONS)]
         for name in img_names:
             img_path = os.path.join(split_root, name + '.jpg')
@@ -46,13 +43,10 @@ def make_dataset(root, dataset_name, split='train', val_size=0.15, test_size=0.1
                 all_pairs.append((img_path, mask_path))
         return all_pairs
 
-    # --- Logic for Flat Datasets that need Splitting ---
     elif structure == 'FLAT_SPLIT':
         if dataset_name == 'JSRT':
-            # --- FIX: The 'cxr' and 'masks' folders are directly inside the root path, not in an additional 'jsrt' subfolder.
             image_dir = os.path.join(root, 'cxr')
             mask_dir = os.path.join(root, 'masks')
-            # ----------------------------------------------------------------------------------------------------------------
             if os.path.exists(image_dir) and os.path.exists(mask_dir):
                 img_names = [os.path.splitext(f)[0] for f in os.listdir(image_dir) if f.lower().endswith('.png')]
                 for name in img_names:
@@ -82,17 +76,10 @@ def make_dataset(root, dataset_name, split='train', val_size=0.15, test_size=0.1
         val_proportion = val_size / (1 - test_size)
         train_pairs, val_pairs = train_test_split(train_val_pairs, test_size=val_proportion, random_state=random_state)
 
-        print(f"Dataset '{dataset_name}': {len(all_pairs)} total images -> "
-              f"{len(train_pairs)} train, {len(val_pairs)} val, {len(test_pairs)} test.")
-
-        if split == 'train':
-            return train_pairs
-        elif split == 'val':
-            return val_pairs
-        elif split == 'test':
-            return test_pairs
-        else:
-            return []
+        if split == 'train': return train_pairs
+        elif split == 'val': return val_pairs
+        elif split == 'test': return test_pairs
+        else: return []
     else:
         raise ValueError(f"Unknown dataset structure '{structure}' for dataset '{dataset_name}'.")
 
@@ -107,7 +94,10 @@ class ImageFolder(data.Dataset):
         if imgs is not None:
             self.imgs = imgs
         else:
+            # --- THE ONLY CHANGE IS ON THIS LINE ---
+            # Pass the 'split' variable to the make_dataset function
             self.imgs = make_dataset(self.root, self.dataset_name, self.split)
+            # ----------------------------------------
 
         if not self.imgs:
             if imgs is None:
