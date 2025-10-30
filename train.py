@@ -12,7 +12,6 @@ project_path = '/kaggle/working/LMU-Net'
 if project_path not in sys.path: sys.path.insert(0, project_path)
 
 import config
-# This now correctly handles multiple backbones
 from light_lasa_unet import Light_LASA_Unet
 from datasets import ImageFolder, make_dataset
 from seg_utils import ConfusionMatrix
@@ -56,7 +55,6 @@ def create_boundary_mask(labels):
 def get_args():
     parser = argparse.ArgumentParser(description='Train Segmentation Models')
     parser.add_argument('--dataset-name', type=str, required=True, choices=list(config.DATASET_CONFIG.keys()))
-    # Updated to include mobilenet_v2 in choices
     parser.add_argument('--backbone', type=str, default='vgg19', choices=list(config.BACKBONE_CHANNELS.keys()) + ['mobilenet_v2'])
     parser.add_argument('--epochs', type=int, default=150)
     parser.add_argument('--batch-size', type=int, default=8)
@@ -138,10 +136,10 @@ def test(args):
     setup_logging(base_exp_path, 'main_training_log.log')
     logging.info("\n" + "="*50 + "\n" + " " * 20 + "STARTING TESTING" + "\n" + "="*50)
 
-    test_ds = ImageFolder(os.path.join(args.dataset_path, 'test'), args.dataset_name, args, 'test')
+    # --- FIX: Pass the base dataset path, not the hardcoded '/test' subdirectory ---
+    test_ds = ImageFolder(root=args.dataset_path, dataset_name=args.dataset_name, args=args, split='test')
     test_loader = DataLoader(test_ds, batch_size=1, shuffle=False, num_workers=args.num_workers, collate_fn=custom_collate_fn)
 
-    # --- ADJUSTED: Model instantiation now handles all backbones ---
     net = Light_LASA_Unet(
         num_classes=args.num_classes,
         backbone_name=args.backbone,
@@ -196,19 +194,18 @@ def train_fold(args, fold_idx, train_imgs, val_imgs):
 
     logging.info(f"===== Starting Fold {fold_idx}/{args.k_folds if args.k_folds > 1 else 1} =====")
 
-    train_ds = ImageFolder(root=None, dataset_name=args.dataset_name, args=args, split='train', imgs=train_imgs)
-    val_ds = ImageFolder(root=None, dataset_name=args.dataset_name, args=args, split='val', imgs=val_imgs)
+    # Note: This part is correct because `train_imgs` and `val_imgs` are passed directly.
+    train_ds = ImageFolder(root=args.dataset_path, dataset_name=args.dataset_name, args=args, split='train', imgs=train_imgs)
+    val_ds = ImageFolder(root=args.dataset_path, dataset_name=args.dataset_name, args=args, split='val', imgs=val_imgs)
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, collate_fn=custom_collate_fn)
     val_loader = DataLoader(val_ds, batch_size=1, shuffle=False, num_workers=args.num_workers, collate_fn=custom_collate_fn)
 
-    # --- ADJUSTED: Model instantiation now handles all backbones ---
     net = Light_LASA_Unet(
         num_classes=args.num_classes,
         backbone_name=args.backbone,
         lasa_kernels=args.lasa_kernels
     ).to(device)
     logging.info(f"Successfully instantiated Light_LASA_Unet with backbone: {args.backbone}")
-
 
     focal_loss_fn = FocalLoss(alpha=config.FOCAL_ALPHA, gamma=config.FOCAL_GAMMA).to(device)
     dice_loss_fn = DiceLoss().to(device)
@@ -306,8 +303,9 @@ def main():
     logging.info(f"Starting experiment: '{exp_name}'\nArguments: {vars(args)}")
 
     if args.k_folds > 1:
-        train_path, val_path = os.path.join(args.dataset_path, 'train'), os.path.join(args.dataset_path, 'val')
-        all_imgs = np.array(make_dataset(train_path, args.dataset_name) + make_dataset(val_path, args.dataset_name))
+        # --- FIX: Load all data from the base path for K-Fold splitting ---
+        # This correctly handles both pre-split and flat-directory datasets.
+        all_imgs = np.array(make_dataset(args.dataset_path, args.dataset_name, split='all'))
         kf = KFold(n_splits=args.k_folds, shuffle=True, random_state=args.random_state)
         kfold_state_path = os.path.join(base_exp_path, 'kfold_state.json')
         start_fold, all_fold_metrics = 0, {}
@@ -333,8 +331,9 @@ def main():
         logging.info(f"Average Validation mIoU: {mean_mIoU:.4f} ± {std_mIoU:.4f}")
     else:
         logging.info("Running a single train/validation split (k_folds=1).")
-        train_ds = ImageFolder(os.path.join(args.dataset_path, 'train'), args.dataset_name, args, 'train')
-        val_ds = ImageFolder(os.path.join(args.dataset_path, 'val'), args.dataset_name, args, 'val')
+        # --- FIX: Pass the base dataset path, not hardcoded '/train' or '/val' subdirectories ---
+        train_ds = ImageFolder(root=args.dataset_path, dataset_name=args.dataset_name, args=args, split='train')
+        val_ds = ImageFolder(root=args.dataset_path, dataset_name=args.dataset_name, args=args, split='val')
         train_fold(args, 0, train_ds.imgs, val_ds.imgs)
 
 if __name__ == '__main__':
