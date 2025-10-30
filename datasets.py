@@ -8,10 +8,10 @@ from PIL import Image, UnidentifiedImageError
 import numpy as np
 from torchvision import transforms
 import random
-import cv2 
-from sklearn.model_selection import train_test_split 
+import cv2
+from sklearn.model_selection import train_test_split
 
-import custom_transforms as tr 
+import custom_transforms as tr
 import config
 
 IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp', '.gif')
@@ -32,12 +32,12 @@ def make_dataset(root, dataset_name, split='train', val_size=0.15, test_size=0.1
         if not os.path.exists(split_root):
             print(f"Warning: Directory not found for pre-split dataset: {split_root}")
             return []
-        
+
         mask_dir = os.path.join(split_root + '_labels')
         if not os.path.exists(mask_dir):
             print(f"Warning: Mask directory not found: {mask_dir}")
             return []
-            
+
         img_names = [os.path.splitext(f)[0] for f in os.listdir(split_root) if f.lower().endswith(IMAGE_EXTENSIONS)]
         for name in img_names:
             img_path = os.path.join(split_root, name + '.jpg')
@@ -50,8 +50,10 @@ def make_dataset(root, dataset_name, split='train', val_size=0.15, test_size=0.1
     elif structure == 'FLAT_SPLIT':
         # --- Gather all image-mask pairs based on dataset-specific paths ---
         if dataset_name == 'JSRT':
-            image_dir = os.path.join(root, 'content', 'jsrt', 'cxr')
-            mask_dir = os.path.join(root, 'content', 'jsrt', 'masks')
+            # --- FIX: Removed the '/content/' part from the path to match your file structure ---
+            image_dir = os.path.join(root, 'jsrt', 'cxr')
+            mask_dir = os.path.join(root, 'jsrt', 'masks')
+            # ----------------------------------------------------------------------------------
             if os.path.exists(image_dir) and os.path.exists(mask_dir):
                 img_names = [os.path.splitext(f)[0] for f in os.listdir(image_dir) if f.lower().endswith('.png')]
                 for name in img_names:
@@ -64,7 +66,7 @@ def make_dataset(root, dataset_name, split='train', val_size=0.15, test_size=0.1
                 img_names = [os.path.splitext(f)[0] for f in os.listdir(image_dir) if f.lower().endswith('.tif')]
                 for name in img_names:
                     all_pairs.append((os.path.join(image_dir, name + '.tif'), os.path.join(mask_dir, name + '.tif')))
-        
+
         # Add elif blocks here for 'COVID19_Radiography', 'DentalPanoramic', 'SixDiseasesChestXRay' following the same pattern
         # Example for DentalPanoramic:
         elif dataset_name == 'DentalPanoramic':
@@ -82,7 +84,7 @@ def make_dataset(root, dataset_name, split='train', val_size=0.15, test_size=0.1
 
         # First split: separate out the test set
         train_val_pairs, test_pairs = train_test_split(all_pairs, test_size=test_size, random_state=random_state)
-        
+
         # Second split: separate train and validation from the remainder
         # Adjust validation size to be proportional to the remaining data
         val_proportion = val_size / (1 - test_size)
@@ -106,35 +108,36 @@ class ImageFolder(data.Dataset):
         self.dataset_name = dataset_name
         self.split = split
         self.args = args
-        
+
         if imgs is not None:
             self.imgs = imgs
         else:
-            self.imgs = make_dataset(self.root, self.dataset_name) 
-        
+            # This line in your original code had a bug, it should pass the split
+            self.imgs = make_dataset(self.root, self.dataset_name, self.split)
+
         if not self.imgs:
             if imgs is None:
                  print(f"Warning: No images found for dataset '{self.dataset_name}', split '{self.split}' at root '{self.root}'.")
             self.imgs = []
-        
+
         self.mean = (0.485, 0.456, 0.406)
         self.std = (0.229, 0.224, 0.225)
 
-        if dataset_name in ['JSRT', 'COVID19_Radiography']: 
+        if dataset_name in ['JSRT', 'COVID19_Radiography']:
             self.mean = [0.5]
             self.std = [0.5]
-            
+
         if self.split == 'train':
             self.composed_transforms = transforms.Compose([
                 tr.RandomResizedCrop(size=(args.scale_h, args.scale_w), scale=(0.8, 1.0), ratio=(0.9, 1.1)),
                 tr.RandomHorizontalFlip(),
-                tr.ElasticTransform(alpha=35, sigma=5, p=0.4), 
-                tr.GridDistortion(num_steps=5, distort_limit=0.2, p=0.4), 
+                tr.ElasticTransform(alpha=35, sigma=5, p=0.4),
+                tr.GridDistortion(num_steps=5, distort_limit=0.2, p=0.4),
                 tr.RandomGaussianBlur(),
-                tr.ColorJitter(brightness=0.2, contrast=0.2), 
-                tr.RandomAffine(degrees=7, translate=(0.05, 0.05), shear=5), 
+                tr.ColorJitter(brightness=0.2, contrast=0.2),
+                tr.RandomAffine(degrees=7, translate=(0.05, 0.05), shear=5),
                 tr.Normalize(mean=self.mean, std=self.std),
-                tr.ToTensor() 
+                tr.ToTensor()
             ])
         else:
             self.composed_transforms = transforms.Compose([
@@ -142,7 +145,7 @@ class ImageFolder(data.Dataset):
                 tr.Normalize(mean=self.mean, std=self.std),
                 tr.ToTensor()
             ])
-            
+
     def __getitem__(self, index):
         img_path, gt_path = self.imgs[index]
         try:
