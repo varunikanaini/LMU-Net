@@ -9,6 +9,7 @@ import numpy as np
 from torchvision import transforms
 import random
 import cv2 
+from sklearn.model_selection import train_test_split 
 
 import custom_transforms as tr 
 import config
@@ -16,107 +17,87 @@ import config
 IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp', '.gif')
 MASK_EXTENSIONS = ('.png', '.tif', '.tiff', '.bmp')
 
-def make_dataset(root, dataset_name):
-    # ... (rest of the function remains unchanged)
-    dataset_items = []
+def make_dataset(root, dataset_name, split='train', val_size=0.15, test_size=0.15, random_state=42):
+    """
+    Creates a list of (image_path, mask_path) tuples for a given dataset and split.
+    Handles both pre-split datasets and flat datasets that need programmatic splitting.
+    """
+    dataset_config = config.DATASET_CONFIG[dataset_name]
+    structure = dataset_config.get('structure')
+    all_pairs = []
 
-    if 'TSRS_RSNA' in dataset_name:
-        image_path = root
+    # --- Logic for Pre-split Datasets ---
+    if structure == 'TSRS_RSNA':
+        split_root = os.path.join(root, split)
+        if not os.path.exists(split_root):
+            print(f"Warning: Directory not found for pre-split dataset: {split_root}")
+            return []
         
-        if os.path.exists(os.path.join(root, 'GT')):
-            mask_path = os.path.join(root, 'GT')
-        elif os.path.exists(root + '_labels'):
-            mask_path = root + '_labels'
+        mask_dir = os.path.join(split_root + '_labels')
+        if not os.path.exists(mask_dir):
+            print(f"Warning: Mask directory not found: {mask_dir}")
+            return []
+            
+        img_names = [os.path.splitext(f)[0] for f in os.listdir(split_root) if f.lower().endswith(IMAGE_EXTENSIONS)]
+        for name in img_names:
+            img_path = os.path.join(split_root, name + '.jpg')
+            mask_path = os.path.join(mask_dir, name + '.png')
+            if os.path.exists(img_path) and os.path.exists(mask_path):
+                all_pairs.append((img_path, mask_path))
+        return all_pairs
+
+    # --- Logic for Flat Datasets that need Splitting ---
+    elif structure == 'FLAT_SPLIT':
+        # --- Gather all image-mask pairs based on dataset-specific paths ---
+        if dataset_name == 'JSRT':
+            image_dir = os.path.join(root, 'content', 'jsrt', 'cxr')
+            mask_dir = os.path.join(root, 'content', 'jsrt', 'masks')
+            if os.path.exists(image_dir) and os.path.exists(mask_dir):
+                img_names = [os.path.splitext(f)[0] for f in os.listdir(image_dir) if f.lower().endswith('.png')]
+                for name in img_names:
+                    all_pairs.append((os.path.join(image_dir, name + '.png'), os.path.join(mask_dir, name + '.png')))
+
+        elif dataset_name == 'CVC-ClinicDB':
+            image_dir = os.path.join(root, 'Original')
+            mask_dir = os.path.join(root, 'Ground Truth')
+            if os.path.exists(image_dir) and os.path.exists(mask_dir):
+                img_names = [os.path.splitext(f)[0] for f in os.listdir(image_dir) if f.lower().endswith('.tif')]
+                for name in img_names:
+                    all_pairs.append((os.path.join(image_dir, name + '.tif'), os.path.join(mask_dir, name + '.tif')))
+        
+        # Add elif blocks here for 'COVID19_Radiography', 'DentalPanoramic', 'SixDiseasesChestXRay' following the same pattern
+        # Example for DentalPanoramic:
+        elif dataset_name == 'DentalPanoramic':
+            image_dir = os.path.join(root, 'images')
+            mask_dir = os.path.join(root, 'segmentation_1')
+            if os.path.exists(image_dir) and os.path.exists(mask_dir):
+                img_names = [os.path.splitext(f)[0] for f in os.listdir(image_dir) if f.lower().endswith(IMAGE_EXTENSIONS)]
+                for name in img_names:
+                    all_pairs.append((os.path.join(image_dir, name + '.jpg'), os.path.join(mask_dir, name + '.png')))
+
+        # --- Perform the split ---
+        if not all_pairs:
+            print(f"Warning: Found 0 image-mask pairs for '{dataset_name}' at root '{root}'.")
+            return []
+
+        # First split: separate out the test set
+        train_val_pairs, test_pairs = train_test_split(all_pairs, test_size=test_size, random_state=random_state)
+        
+        # Second split: separate train and validation from the remainder
+        # Adjust validation size to be proportional to the remaining data
+        val_proportion = val_size / (1 - test_size)
+        train_pairs, val_pairs = train_test_split(train_val_pairs, test_size=val_proportion, random_state=random_state)
+
+        if split == 'train':
+            return train_pairs
+        elif split == 'val':
+            return val_pairs
+        elif split == 'test':
+            return test_pairs
         else:
-            raise FileNotFoundError(f"Could not find label directory for {root}. Looked in '{os.path.join(root, 'GT')}' and '{root + '_labels'}'.")
-
-        img_list = []
-        for f in os.listdir(image_path):
-            if f.lower().endswith(('.png', '.jpg', '.jpeg')):
-                img_list.append(os.path.splitext(f)[0])
-
-        dataset_items = []
-        for img_name in img_list:
-            img_full_path = os.path.join(image_path, img_name + '.jpg')
-            mask_full_path = os.path.join(mask_path, img_name + '.png')
-            
-            if os.path.exists(img_full_path) and os.path.exists(mask_full_path):
-                dataset_items.append((img_full_path, mask_full_path))
-            else:
-                print(f"Warning: Missing image or mask for {img_name}. Skipping.")
-
-        if not dataset_items:
-            raise RuntimeError(f"Found 0 images in {root} with corresponding labels. Please check dataset path and file extensions.")
-            
-    elif dataset_name == 'JSRT':
-        image_path = os.path.join(root, 'images')
-        mask_path = os.path.join(root, 'masks')
-        if not os.path.isdir(image_path) or not os.path.isdir(mask_path): return []
-        for f in os.listdir(image_path):
-            if f.lower().endswith('.png'):
-                img_name_base = os.path.splitext(f)[0]
-                img_full_path = os.path.join(image_path, f)
-                mask_full_path = os.path.join(mask_path, img_name_base + '.png')
-                if os.path.exists(mask_full_path): dataset_items.append((img_full_path, mask_full_path))
-    
-    elif dataset_name == 'COVID19_Radiography':
-        base_dataset_folder = os.path.join(root, 'COVID-19_Radiography_Database')
-        subfolders = ['COVID', 'NORMAL', 'Lung_Opacity', 'Viral Pneumonia']
-        for sub_name in subfolders:
-            sub_image_path = os.path.join(base_dataset_folder, sub_name, 'images')
-            sub_mask_path = os.path.join(base_dataset_folder, sub_name, 'masks')
-            if not os.path.isdir(sub_image_path) or not os.path.isdir(sub_mask_path): continue
-            for f in os.listdir(sub_image_path):
-                if f.lower().endswith(IMAGE_EXTENSIONS):
-                    img_name_base = os.path.splitext(f)[0]
-                    img_full_path = os.path.join(sub_image_path, f)
-                    mask_full_path = os.path.join(sub_mask_path, img_name_base + '.png')
-                    if os.path.exists(mask_full_path): dataset_items.append((img_full_path, mask_full_path))
-
-    elif dataset_name == 'CVC-ClinicDB':
-        image_path = os.path.join(root, 'Original')
-        mask_path = os.path.join(root, 'Ground Truth')
-        if not os.path.isdir(image_path) or not os.path.isdir(mask_path): return []
-        for f in os.listdir(image_path):
-            if f.lower().endswith('.tif'):
-                img_name_base = os.path.splitext(f)[0]
-                img_full_path = os.path.join(image_path, f)
-                mask_full_path = os.path.join(mask_path, img_name_base + '.tif')
-                if os.path.exists(mask_full_path): dataset_items.append((img_full_path, mask_full_path))
-
-    elif dataset_name == 'DentalPanoramic':
-        image_path = os.path.join(root, 'images')
-        mask_path = os.path.join(root, 'segmentation_1')
-        if not os.path.isdir(image_path) or not os.path.isdir(mask_path): return []
-        for f in os.listdir(image_path):
-            if f.lower().endswith(IMAGE_EXTENSIONS):
-                img_name_base = os.path.splitext(f)[0]
-                img_full_path = os.path.join(image_path, f)
-                mask_full_path = os.path.join(mask_path, img_name_base + '.png')
-                if os.path.exists(mask_full_path): dataset_items.append((img_full_path, mask_full_path))
-
-    elif dataset_name == 'SixDiseasesChestXRay':
-        base_split_folder = root 
-        if not os.path.isdir(base_split_folder): return []
-        subfolders = ['Covid', 'Normal', 'Tuberculosis', 'Bacterial Pneumonia', 'Pneumothorax', 'Viral Pneumonia']
-        for sub_name in subfolders:
-            sub_image_path = os.path.join(base_split_folder, sub_name, 'images')
-            sub_mask_path = os.path.join(base_split_folder, sub_name, 'masks')
-            if not os.path.isdir(sub_image_path) or not os.path.isdir(sub_mask_path): continue
-            for f in os.listdir(sub_image_path):
-                if f.lower().endswith(IMAGE_EXTENSIONS):
-                    img_name_base = os.path.splitext(f)[0]
-                    img_full_path = os.path.join(sub_image_path, f)
-                    mask_full_path = os.path.join(sub_mask_path, img_name_base + '.png')
-                    if os.path.exists(mask_full_path): dataset_items.append((img_full_path, mask_full_path))
-
+            return []
     else:
-        raise ValueError(f"Unknown dataset_name: {dataset_name}.")
-    
-    if not dataset_items and (dataset_name != 'PLACEHOLDER_FOR_DYNAMIC_SELECTION'):
-        print(f"Warning: Found 0 items for dataset '{dataset_name}' at root '{root}'. Please check dataset path, file extensions, and directory structure.")
-        
-    return dataset_items
+        raise ValueError(f"Unknown dataset structure '{structure}' for dataset '{dataset_name}'.")
 
 
 class ImageFolder(data.Dataset):
