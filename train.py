@@ -51,7 +51,7 @@ def create_boundary_mask(labels):
         boundary_masks.append(boundary)
     return torch.from_numpy(np.array(boundary_masks)).float().unsqueeze(1).to(labels.device)
 
-# --- Argument Parsing ---
+# --- Argument Parsing (No changes needed here) ---
 def get_args():
     parser = argparse.ArgumentParser(description='Train Segmentation Models')
     parser.add_argument('--dataset-name', type=str, required=True, choices=list(config.DATASET_CONFIG.keys()))
@@ -59,6 +59,7 @@ def get_args():
     parser.add_argument('--epochs', type=int, default=150)
     parser.add_argument('--batch-size', type=int, default=8)
     parser.add_argument('--lr', type=float, default=1e-4)
+    # ... (rest of args are fine)
     parser.add_argument('--weight-decay', type=float, default=1e-4)
     parser.add_argument('--patience', type=int, default=30)
     parser.add_argument('--lasa-kernels', type=int, nargs='+', default=[1, 3, 5, 7])
@@ -100,8 +101,9 @@ def custom_collate_fn(batch):
     return torch.utils.data.dataloader.default_collate(batch) if batch else None
 
 
-# --- Evaluation Function ---
+# --- Evaluation Function (No changes needed here) ---
 def evaluate_model(net, data_loader, device, focal_loss_fn, dice_loss_fn, args, mode="Validating"):
+    # ... (this function is fine)
     net.eval()
     confmat, loss_recorder = ConfusionMatrix(args.num_classes), AvgMeter()
     with torch.no_grad():
@@ -115,16 +117,12 @@ def evaluate_model(net, data_loader, device, focal_loss_fn, dice_loss_fn, args, 
                 total_loss += args.deep_supervision_weights[i] * ((args.focal_loss_weight * f_l) + (args.dice_loss_weight * d_l))
             loss_recorder.update(total_loss.item(), inputs.size(0))
             confmat.update(labels.flatten(), outputs[-1].argmax(1).flatten())
-
     oa, _, iou, fwiou, dice = confmat.compute()
     miou = iou.mean().item()
     oa = oa.item()
-
     logging.info(f"--- {mode} Summary --- Loss: {loss_recorder.avg:.4f}, OA: {oa:.4f}, mIoU: {miou:.4f}, FW-IoU: {fwiou.item():.4f}, Dice: {dice:.4f}")
-
     if mode.startswith("Validating"):
         net.train()
-
     return oa, miou, fwiou.item(), dice
 
 # --- Testing Function ---
@@ -132,7 +130,6 @@ def test(args):
     device = torch.device("cuda")
     exp_name = f"{args.backbone}_FreezeTune_LASA_{args.dataset_name.replace('TSRS_RSNA-', '').lower()}"
     base_exp_path = os.path.join(config.CKPT_ROOT, exp_name)
-
     setup_logging(base_exp_path, 'main_training_log.log')
     logging.info("\n" + "="*50 + "\n" + " " * 20 + "STARTING TESTING" + "\n" + "="*50)
 
@@ -140,44 +137,30 @@ def test(args):
     test_ds = ImageFolder(root=args.dataset_path, dataset_name=args.dataset_name, args=args, split='test')
     test_loader = DataLoader(test_ds, batch_size=1, shuffle=False, num_workers=args.num_workers, collate_fn=custom_collate_fn)
 
-    net = Light_LASA_Unet(
-        num_classes=args.num_classes,
-        backbone_name=args.backbone,
-        lasa_kernels=args.lasa_kernels
-    ).to(device)
+    net = Light_LASA_Unet(num_classes=args.num_classes, backbone_name=args.backbone, lasa_kernels=args.lasa_kernels).to(device)
     logging.info(f"Successfully instantiated Light_LASA_Unet with backbone: {args.backbone}")
-
-
+    # ... (rest of function is fine)
     focal_loss_fn = FocalLoss(alpha=config.FOCAL_ALPHA, gamma=config.FOCAL_GAMMA).to(device)
     dice_loss_fn = DiceLoss().to(device)
-
     all_fold_metrics = {'oa': [], 'miou': [], 'fwiou': [], 'dice': []}
     num_folds_to_test = args.k_folds if args.k_folds > 1 else 1
-
     for fold_idx in range(num_folds_to_test):
         fold_exp_path = os.path.join(base_exp_path, f"fold_{fold_idx}")
         ckpt_path = os.path.join(fold_exp_path, 'best_checkpoint.pth')
-
         if not os.path.exists(ckpt_path):
             logging.warning(f"Checkpoint for fold {fold_idx} not found at {ckpt_path}. Skipping.")
             continue
-
         logging.info(f"--- Loading model for Fold {fold_idx} from {ckpt_path} ---")
         net.load_state_dict(torch.load(ckpt_path, map_location=device))
-
         oa, miou, fwiou, dice = evaluate_model(net, test_loader, device, focal_loss_fn, dice_loss_fn, args, mode=f"Testing Fold {fold_idx}")
-
         all_fold_metrics['oa'].append(oa)
         all_fold_metrics['miou'].append(miou)
         all_fold_metrics['fwiou'].append(fwiou)
         all_fold_metrics['dice'].append(dice)
-
     logging.info("\n" + "="*50 + "\n" + " " * 15 + "FINAL TESTING SUMMARY" + "\n" + "="*50)
-
     if not all_fold_metrics['miou']:
         logging.error("No models were tested. Cannot compute final metrics.")
         return
-
     logging.info(f"Metrics calculated over {len(all_fold_metrics['miou'])} tested fold(s).")
     logging.info(f"Overall Accuracy (OA): {np.mean(all_fold_metrics['oa']):.4f} ± {np.std(all_fold_metrics['oa']):.4f}")
     logging.info(f"Mean IoU (mIoU):     {np.mean(all_fold_metrics['miou']):.4f} ± {np.std(all_fold_metrics['miou']):.4f}")
@@ -185,37 +168,28 @@ def test(args):
     logging.info(f"Dice Score:          {np.mean(all_fold_metrics['dice']):.4f} ± {np.std(all_fold_metrics['dice']):.4f}")
     logging.info("="*50)
 
+# --- train_fold Function (No changes needed here) ---
 def train_fold(args, fold_idx, train_imgs, val_imgs):
+    # ... (this function is fine because it receives the image lists directly)
     device = torch.device("cuda")
     exp_name = f"{args.backbone}_FreezeTune_LASA_{args.dataset_name.replace('TSRS_RSNA-', '').lower()}"
     fold_exp_path = os.path.join(config.CKPT_ROOT, exp_name, f"fold_{fold_idx}")
     check_mkdir(fold_exp_path)
     setup_logging(fold_exp_path, f'fold_{fold_idx}_training.log')
-
     logging.info(f"===== Starting Fold {fold_idx}/{args.k_folds if args.k_folds > 1 else 1} =====")
-
-    # Note: This part is correct because `train_imgs` and `val_imgs` are passed directly.
     train_ds = ImageFolder(root=args.dataset_path, dataset_name=args.dataset_name, args=args, split='train', imgs=train_imgs)
     val_ds = ImageFolder(root=args.dataset_path, dataset_name=args.dataset_name, args=args, split='val', imgs=val_imgs)
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, collate_fn=custom_collate_fn)
     val_loader = DataLoader(val_ds, batch_size=1, shuffle=False, num_workers=args.num_workers, collate_fn=custom_collate_fn)
-
-    net = Light_LASA_Unet(
-        num_classes=args.num_classes,
-        backbone_name=args.backbone,
-        lasa_kernels=args.lasa_kernels
-    ).to(device)
+    net = Light_LASA_Unet(num_classes=args.num_classes, backbone_name=args.backbone, lasa_kernels=args.lasa_kernels).to(device)
     logging.info(f"Successfully instantiated Light_LASA_Unet with backbone: {args.backbone}")
-
     focal_loss_fn = FocalLoss(alpha=config.FOCAL_ALPHA, gamma=config.FOCAL_GAMMA).to(device)
     dice_loss_fn = DiceLoss().to(device)
     optimizer = optim.Adam(net.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=args.scheduler_T0, T_mult=2, eta_min=1e-6) if args.scheduler_type == 'CosineAnnealingWarmRestarts' else optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', patience=args.scheduler_patience)
-
     start_epoch, best_mIoU, patience_counter = 0, 0.0, 0
     best_ckpt_path = os.path.join(fold_exp_path, 'best_checkpoint.pth')
     latest_ckpt_path = os.path.join(fold_exp_path, 'latest_checkpoint.pth')
-
     if args.resume and os.path.exists(latest_ckpt_path):
         try:
             ckpt = torch.load(latest_ckpt_path, map_location=device)
@@ -229,10 +203,8 @@ def train_fold(args, fold_idx, train_imgs, val_imgs):
         except Exception as e:
             logging.error(f"Could not resume fold {fold_idx}: {e}. Starting this fold from scratch.")
             start_epoch = 0
-
     if start_epoch < args.fine_tune_epochs: freeze_backbone(net)
     else: unfreeze_backbone(net)
-
     for epoch in range(start_epoch, args.epochs):
         if epoch == args.fine_tune_epochs:
             unfreeze_backbone(net)
@@ -240,11 +212,9 @@ def train_fold(args, fold_idx, train_imgs, val_imgs):
             optimizer = optim.Adam(net.parameters(), lr=new_lr, weight_decay=args.weight_decay)
             scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=args.scheduler_T0, T_mult=2, eta_min=1e-6)
             logging.info(f"--- Switched to Phase 2. New LR: {new_lr} ---")
-
         net.train()
         loss_recorder = AvgMeter()
         train_iterator = tqdm(train_loader, desc=f"Epoch {epoch+1}/{args.epochs} (Fold {fold_idx})")
-
         for data in train_iterator:
             if data is None: continue
             inputs, labels = data['image'].to(device), data['label'].to(device)
@@ -265,12 +235,9 @@ def train_fold(args, fold_idx, train_imgs, val_imgs):
             optimizer.step()
             loss_recorder.update(total_loss.item(), inputs.size(0))
             train_iterator.set_postfix(loss=loss_recorder.avg)
-
         _, current_mIoU, _, _ = evaluate_model(net, val_loader, device, focal_loss_fn, dice_loss_fn, args, mode=f"Validating Fold {fold_idx}")
-
         if isinstance(scheduler, optim.lr_scheduler.ReduceLROnPlateau): scheduler.step(current_mIoU)
         else: scheduler.step()
-
         if current_mIoU > best_mIoU:
             best_mIoU, patience_counter = current_mIoU, 0
             torch.save(net.state_dict(), best_ckpt_path)
@@ -278,13 +245,10 @@ def train_fold(args, fold_idx, train_imgs, val_imgs):
         else:
             patience_counter += 1
             logging.info(f"⚠️ mIoU did not improve for {patience_counter} epoch(s). Best: {best_mIoU:.4f}")
-
         torch.save({'epoch': epoch, 'model_state_dict': net.state_dict(), 'optimizer_state_dict': optimizer.state_dict(), 'scheduler_state_dict': scheduler.state_dict(), 'best_mIoU': best_mIoU, 'patience_counter': patience_counter}, latest_ckpt_path)
-
         if patience_counter >= args.patience:
             logging.info(f"Early stopping triggered for fold {fold_idx}.")
             break
-
     logging.info(f"===== Finished Fold {fold_idx} ===== Best Val mIoU: {best_mIoU:.4f}")
     return best_mIoU
 
@@ -298,25 +262,28 @@ def main():
     exp_name = f"{args.backbone}_FreezeTune_LASA_{args.dataset_name.replace('TSRS_RSNA-', '').lower()}"
     base_exp_path = os.path.join(config.CKPT_ROOT, exp_name)
     check_mkdir(base_exp_path)
-
     setup_logging(base_exp_path, 'main_training_log.log')
     logging.info(f"Starting experiment: '{exp_name}'\nArguments: {vars(args)}")
 
     if args.k_folds > 1:
-        # --- FIX: Load all data from the base path for K-Fold splitting ---
-        # This correctly handles both pre-split and flat-directory datasets.
+        # This k-fold logic needs a small fix to work with the new dataset loader
+        # It needs to gather all images first
+        # We'll add a special 'all' split to make_dataset for this purpose
         all_imgs = np.array(make_dataset(args.dataset_path, args.dataset_name, split='all'))
+        if len(all_imgs) == 0:
+            logging.error(f"No images found for K-Fold splitting. Check dataset path and `make_dataset` for {args.dataset_name}.")
+            return
+            
         kf = KFold(n_splits=args.k_folds, shuffle=True, random_state=args.random_state)
+        # ... (rest of k-fold logic is fine)
         kfold_state_path = os.path.join(base_exp_path, 'kfold_state.json')
         start_fold, all_fold_metrics = 0, {}
-
         if args.resume and os.path.exists(kfold_state_path):
             with open(kfold_state_path, 'r') as f:
                 state = json.load(f)
                 start_fold = state.get('next_fold_to_run', 0)
                 all_fold_metrics = state.get('all_fold_metrics', {})
             logging.info(f"Resuming k-fold training. Starting from fold {start_fold}.")
-
         for fold_idx, (train_indices, val_indices) in enumerate(kf.split(all_imgs)):
             if fold_idx < start_fold: continue
             with open(kfold_state_path, 'w') as f: json.dump({'next_fold_to_run': fold_idx, 'all_fold_metrics': all_fold_metrics}, f)
@@ -324,16 +291,18 @@ def main():
             best_fold_mIoU = train_fold(args, fold_idx, fold_train_imgs, fold_val_imgs)
             all_fold_metrics[f'fold_{fold_idx}'] = best_fold_mIoU
             with open(kfold_state_path, 'w') as f: json.dump({'next_fold_to_run': fold_idx + 1, 'all_fold_metrics': all_fold_metrics}, f)
-
         logging.info("===== K-Fold Training Finished =====")
         mean_mIoU = np.mean(list(all_fold_metrics.values())); std_mIoU = np.std(list(all_fold_metrics.values()))
         logging.info(f"Metrics across {args.k_folds} folds: {all_fold_metrics}")
         logging.info(f"Average Validation mIoU: {mean_mIoU:.4f} ± {std_mIoU:.4f}")
     else:
         logging.info("Running a single train/validation split (k_folds=1).")
-        # --- FIX: Pass the base dataset path, not hardcoded '/train' or '/val' subdirectories ---
+        # --- THE IMPORTANT FIX ---
+        # Pass the base dataset path directly to ImageFolder.
+        # Do NOT add '/train' or '/val'. The datasets.py script handles this now.
         train_ds = ImageFolder(root=args.dataset_path, dataset_name=args.dataset_name, args=args, split='train')
         val_ds = ImageFolder(root=args.dataset_path, dataset_name=args.dataset_name, args=args, split='val')
+        # -------------------------
         train_fold(args, 0, train_ds.imgs, val_ds.imgs)
 
 if __name__ == '__main__':
