@@ -44,23 +44,15 @@ def make_dataset(root, dataset_name, split='train', val_size=0.15, test_size=0.1
         image_dir = os.path.join(root, 'CXR_png')
         left_mask_dir = os.path.join(root, 'ManualMask', 'leftMask')
         right_mask_dir = os.path.join(root, 'ManualMask', 'rightMask')
-
-        if not all(os.path.exists(d) for d in [image_dir, left_mask_dir, right_mask_dir]):
-            print(f"Warning: One or more directories not found for MontgomeryCounty dataset at {root}")
-            return []
-
+        if not all(os.path.exists(d) for d in [image_dir, left_mask_dir, right_mask_dir]): return []
         for img_file in os.listdir(image_dir):
             if img_file.lower().endswith('.png'):
                 base_name = os.path.splitext(img_file)[0]
                 img_path = os.path.join(image_dir, img_file)
-                # Note: The mask files have an extra '_mask' suffix.
-                left_mask_path = os.path.join(left_mask_dir, base_name + '_mask.png')
-                right_mask_path = os.path.join(right_mask_dir, base_name + '_mask.png')
-
+                left_mask_path = os.path.join(left_mask_dir, base_name + '.png') # Note: official masks don't have '_mask'
+                right_mask_path = os.path.join(right_mask_dir, base_name + '.png')
                 if os.path.exists(left_mask_path) and os.path.exists(right_mask_path):
-                    # We store a 3-element tuple for this dataset
                     all_pairs.append((img_path, left_mask_path, right_mask_path))
-    # -----------------------------------------------
 
     elif structure == 'FLAT_SPLIT':
         # ... (this part is unchanged)
