@@ -59,7 +59,7 @@ DATASET_CONFIG = {
         'structure': 'FLAT_SPLIT', 'num_classes': 2,
     },
     'ETIS-LaribPolypDB': {
-        'path': os.path.join(DATA_ROOT, 'ETIS-LaribPolypDB'), # Assuming this folder name
+        'path': os.path.join(DATA_ROOT, 'etis-laribpolypdb'),
         'structure': 'FLAT_SPLIT', 'num_classes': 2,
     },
     'Kvasir-SEG': {
