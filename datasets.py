@@ -92,6 +92,31 @@ def make_dataset(root, dataset_name, split='train', val_size=0.15, test_size=0.1
                             mask_path = os.path.join(mask_dir, base_name + '.png')
                             if os.path.exists(mask_path):
                                 all_pairs.append((img_path, mask_path))
+                                
+        elif dataset_name in ['CVC-ColonDB', 'ETIS-LaribPolypDB']:
+            image_dir = os.path.join(root, 'images')
+            mask_dir = os.path.join(root, 'masks')
+            if os.path.exists(image_dir) and os.path.exists(mask_dir):
+                # These datasets use .png for both images and masks
+                for file_name in os.listdir(image_dir):
+                    if file_name.lower().endswith('.png'):
+                        img_path = os.path.join(image_dir, file_name)
+                        mask_path = os.path.join(mask_dir, file_name)
+                        if os.path.exists(mask_path):
+                            all_pairs.append((img_path, mask_path))
+
+        # --- NEW LOGIC FOR Kvasir-SEG ---
+        elif dataset_name == 'Kvasir-SEG':
+            image_dir = os.path.join(root, 'images')
+            mask_dir = os.path.join(root, 'masks')
+            if os.path.exists(image_dir) and os.path.exists(mask_dir):
+                # This dataset uses .jpg for both images and masks
+                for file_name in os.listdir(image_dir):
+                    if file_name.lower().endswith('.jpg'):
+                        img_path = os.path.join(image_dir, file_name)
+                        mask_path = os.path.join(mask_dir, file_name)
+                        if os.path.exists(mask_path):
+                            all_pairs.append((img_path, mask_path))
 
     if not all_pairs:
         print(f"Warning: Found 0 image-mask pairs for '{dataset_name}' at root '{root}'.")
