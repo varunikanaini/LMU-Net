@@ -80,7 +80,7 @@ def make_dataset(root, dataset_name, split='train', val_size=0.15, test_size=0.1
         
         elif dataset_name == 'COVID19_Radiography':
             base_data_path = os.path.join(root, 'COVID-19_Radiography_Dataset')
-            subfolders = ['COVID', 'Normal', 'Lung_Opacity', 'Viral Pneumonia']
+            subfolders = ['COVID', 'Normal', 'Lung_Opacity', 'Viral_Pneumonia']
             for folder_name in subfolders:
                 image_dir = os.path.join(base_data_path, folder_name, 'images')
                 mask_dir = os.path.join(base_data_path, folder_name, 'masks')
