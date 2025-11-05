@@ -50,8 +50,7 @@ DATASET_CONFIG = {
     },
     # --- NEW DATASET ENTRY ---
     'MontgomeryCounty': {
-        # Assuming the dataset is in a folder named 'NLM-MontgomeryCXRSet' as per the official zip
-        'path': os.path.join(DATA_ROOT, 'NLM-MontgomeryCXRSet'),
+        'path': os.path.join(DATA_ROOT, 'MontgomerySet'),
         'structure': 'MONTGOMERY', # A unique structure identifier
         'num_classes': 2, # 1 for background, 1 for lungs
     },
