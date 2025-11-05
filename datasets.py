@@ -77,6 +77,21 @@ def make_dataset(root, dataset_name, split='train', val_size=0.15, test_size=0.1
                 img_names = [os.path.splitext(f)[0] for f in os.listdir(image_dir) if f.lower().endswith(IMAGE_EXTENSIONS)]
                 for name in img_names:
                     all_pairs.append((os.path.join(image_dir, name + '.jpg'), os.path.join(mask_dir, name + '.png')))
+        
+        elif dataset_name == 'COVID19_Radiography':
+            base_data_path = os.path.join(root, 'COVID-19_Radiography_Dataset')
+            subfolders = ['COVID', 'Normal', 'Lung_Opacity', 'Viral Pneumonia']
+            for folder_name in subfolders:
+                image_dir = os.path.join(base_data_path, folder_name, 'images')
+                mask_dir = os.path.join(base_data_path, folder_name, 'masks')
+                if os.path.exists(image_dir) and os.path.exists(mask_dir):
+                    for img_file in os.listdir(image_dir):
+                        if img_file.lower().endswith(IMAGE_EXTENSIONS):
+                            base_name = os.path.splitext(img_file)[0]
+                            img_path = os.path.join(image_dir, img_file)
+                            mask_path = os.path.join(mask_dir, base_name + '.png')
+                            if os.path.exists(mask_path):
+                                all_pairs.append((img_path, mask_path))
 
     if not all_pairs:
         print(f"Warning: Found 0 image-mask pairs for '{dataset_name}' at root '{root}'.")
