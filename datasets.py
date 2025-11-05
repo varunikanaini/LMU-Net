@@ -3,7 +3,6 @@
 import os
 import torch
 import torch.utils.data as data
-from torch.utils.data import Dataset
 from PIL import Image, UnidentifiedImageError
 import numpy as np
 from torchvision import transforms
@@ -18,15 +17,12 @@ IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp', '.gif')
 MASK_EXTENSIONS = ('.png', '.tif', '.tiff', '.bmp')
 
 def make_dataset(root, dataset_name, split='train', val_size=0.15, test_size=0.15, random_state=42):
-    """
-    Creates a list of (image_path, mask_path) tuples for a given dataset and split.
-    Handles both pre-split datasets and flat datasets that need programmatic splitting.
-    """
     dataset_config = config.DATASET_CONFIG[dataset_name]
     structure = dataset_config.get('structure')
     all_pairs = []
 
     if structure == 'TSRS_RSNA':
+        # ... (this part is unchanged)
         split_root = os.path.join(root, split)
         if not os.path.exists(split_root):
             print(f"Warning: Directory not found for pre-split dataset: {split_root}")
@@ -43,7 +39,31 @@ def make_dataset(root, dataset_name, split='train', val_size=0.15, test_size=0.1
                 all_pairs.append((img_path, mask_path))
         return all_pairs
 
+    # --- NEW LOGIC FOR MONTGOMERY COUNTY DATASET ---
+    elif structure == 'MONTGOMERY':
+        image_dir = os.path.join(root, 'CXR_png')
+        left_mask_dir = os.path.join(root, 'ManualMask', 'leftMask')
+        right_mask_dir = os.path.join(root, 'ManualMask', 'rightMask')
+
+        if not all(os.path.exists(d) for d in [image_dir, left_mask_dir, right_mask_dir]):
+            print(f"Warning: One or more directories not found for MontgomeryCounty dataset at {root}")
+            return []
+
+        for img_file in os.listdir(image_dir):
+            if img_file.lower().endswith('.png'):
+                base_name = os.path.splitext(img_file)[0]
+                img_path = os.path.join(image_dir, img_file)
+                # Note: The mask files have an extra '_mask' suffix.
+                left_mask_path = os.path.join(left_mask_dir, base_name + '_mask.png')
+                right_mask_path = os.path.join(right_mask_dir, base_name + '_mask.png')
+
+                if os.path.exists(left_mask_path) and os.path.exists(right_mask_path):
+                    # We store a 3-element tuple for this dataset
+                    all_pairs.append((img_path, left_mask_path, right_mask_path))
+    # -----------------------------------------------
+
     elif structure == 'FLAT_SPLIT':
+        # ... (this part is unchanged)
         if dataset_name == 'JSRT':
             image_dir = os.path.join(root, 'cxr')
             mask_dir = os.path.join(root, 'masks')
@@ -51,7 +71,6 @@ def make_dataset(root, dataset_name, split='train', val_size=0.15, test_size=0.1
                 img_names = [os.path.splitext(f)[0] for f in os.listdir(image_dir) if f.lower().endswith('.png')]
                 for name in img_names:
                     all_pairs.append((os.path.join(image_dir, name + '.png'), os.path.join(mask_dir, name + '.png')))
-
         elif dataset_name == 'CVC-ClinicDB':
             image_dir = os.path.join(root, 'Original')
             mask_dir = os.path.join(root, 'Ground Truth')
@@ -59,7 +78,6 @@ def make_dataset(root, dataset_name, split='train', val_size=0.15, test_size=0.1
                 img_names = [os.path.splitext(f)[0] for f in os.listdir(image_dir) if f.lower().endswith('.tif')]
                 for name in img_names:
                     all_pairs.append((os.path.join(image_dir, name + '.tif'), os.path.join(mask_dir, name + '.tif')))
-
         elif dataset_name == 'DentalPanoramic':
             image_dir = os.path.join(root, 'images')
             mask_dir = os.path.join(root, 'segmentation_1')
@@ -68,20 +86,19 @@ def make_dataset(root, dataset_name, split='train', val_size=0.15, test_size=0.1
                 for name in img_names:
                     all_pairs.append((os.path.join(image_dir, name + '.jpg'), os.path.join(mask_dir, name + '.png')))
 
-        if not all_pairs:
-            print(f"Warning: Found 0 image-mask pairs for '{dataset_name}' at root '{root}'.")
-            return []
+    if not all_pairs:
+        print(f"Warning: Found 0 image-mask pairs for '{dataset_name}' at root '{root}'.")
+        return []
 
-        train_val_pairs, test_pairs = train_test_split(all_pairs, test_size=test_size, random_state=random_state)
-        val_proportion = val_size / (1 - test_size)
-        train_pairs, val_pairs = train_test_split(train_val_pairs, test_size=val_proportion, random_state=random_state)
+    # Splitting logic is now universal for FLAT_SPLIT and MONTGOMERY
+    train_val_pairs, test_pairs = train_test_split(all_pairs, test_size=test_size, random_state=random_state)
+    val_proportion = val_size / (1 - test_size)
+    train_pairs, val_pairs = train_test_split(train_val_pairs, test_size=val_proportion, random_state=random_state)
 
-        if split == 'train': return train_pairs
-        elif split == 'val': return val_pairs
-        elif split == 'test': return test_pairs
-        else: return []
-    else:
-        raise ValueError(f"Unknown dataset structure '{structure}' for dataset '{dataset_name}'.")
+    if split == 'train': return train_pairs
+    elif split == 'val': return val_pairs
+    elif split == 'test': return test_pairs
+    else: return []
 
 
 class ImageFolder(data.Dataset):
@@ -94,10 +111,7 @@ class ImageFolder(data.Dataset):
         if imgs is not None:
             self.imgs = imgs
         else:
-            # --- THE ONLY CHANGE IS ON THIS LINE ---
-            # Pass the 'split' variable to the make_dataset function
             self.imgs = make_dataset(self.root, self.dataset_name, self.split)
-            # ----------------------------------------
 
         if not self.imgs:
             if imgs is None:
@@ -107,7 +121,8 @@ class ImageFolder(data.Dataset):
         self.mean = (0.485, 0.456, 0.406)
         self.std = (0.229, 0.224, 0.225)
 
-        if dataset_name in ['JSRT', 'COVID19_Radiography']:
+        # Montgomery is also grayscale
+        if dataset_name in ['JSRT', 'COVID19_Radiography', 'MontgomeryCounty']:
             self.mean = [0.5]
             self.std = [0.5]
 
@@ -131,11 +146,31 @@ class ImageFolder(data.Dataset):
             ])
 
     def __getitem__(self, index):
-        img_path, gt_path = self.imgs[index]
         try:
+            # --- NEW LOGIC TO HANDLE DIFFERENT DATASET STRUCTURES ---
+            if self.dataset_name == 'MontgomeryCounty':
+                img_path, left_gt_path, right_gt_path = self.imgs[index]
+                
+                # Load and combine masks
+                left_mask_cv = cv2.imread(left_gt_path, cv2.IMREAD_GRAYSCALE)
+                right_mask_cv = cv2.imread(right_gt_path, cv2.IMREAD_GRAYSCALE)
+                
+                if left_mask_cv is None or right_mask_cv is None:
+                    raise FileNotFoundError(f"Could not read one or both masks for {img_path}")
+                
+                # Combine the two masks into one using a bitwise OR operation
+                mask_cv = cv2.bitwise_or(left_mask_cv, right_mask_cv)
+                
+            else: # For all other datasets
+                img_path, gt_path = self.imgs[index]
+                mask_cv = cv2.imread(gt_path, cv2.IMREAD_GRAYSCALE)
+                if mask_cv is None:
+                    raise FileNotFoundError(f"OpenCV could not read mask: {gt_path}.")
+            # --------------------------------------------------------
+
             img_cv = cv2.imread(img_path)
             if img_cv is None:
-                raise FileNotFoundError(f"OpenCV could not read image: {img_path}. File might be corrupted or path incorrect.")
+                raise FileNotFoundError(f"OpenCV could not read image: {img_path}.")
 
             if img_cv.ndim == 3 and img_cv.shape[2] == 3:
                 img_cv = cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)
@@ -143,16 +178,11 @@ class ImageFolder(data.Dataset):
                 img_cv = cv2.cvtColor(img_cv, cv2.COLOR_GRAY2RGB)
 
             img = Image.fromarray(img_cv)
-
-            mask_cv = cv2.imread(gt_path, cv2.IMREAD_GRAYSCALE)
-            if mask_cv is None:
-                raise FileNotFoundError(f"OpenCV could not read mask: {gt_path}. File might be corrupted or path incorrect.")
-
             target = Image.fromarray(mask_cv, mode='L')
             label = self.convert_label(target)
 
         except (UnidentifiedImageError, FileNotFoundError, cv2.error, ValueError, Exception) as e:
-            print(f"ERROR: Could not open/process image or mask for paths: {img_path}, {gt_path}. Error: {e}. Returning None for this sample.")
+            print(f"ERROR: Could not process sample at index {index}. Error: {e}. Skipping.")
             return None
 
         sample = {'image': img, 'label': label}
