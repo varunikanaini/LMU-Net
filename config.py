@@ -48,16 +48,15 @@ DATASET_CONFIG = {
         'structure': 'FLAT_SPLIT',
         'num_classes': 6,
     },
-    # --- NEW DATASET ENTRY ---
+    # Your updated and correct path for Montgomery
     'MontgomeryCounty': {
         'path': os.path.join(DATA_ROOT, 'MontgomerySet'),
-        'structure': 'MONTGOMERY', # A unique structure identifier
-        'num_classes': 2, # 1 for background, 1 for lungs
+        'structure': 'MONTGOMERY',
+        'num_classes': 2,
     },
-    # -------------------------
 }
 
-# --- (Rest of the config.py file is unchanged) ---
+# --- (Rest of file is unchanged) ---
 BACKBONE_INPUT_RESOLUTIONS = {
     'vgg16': (224, 224),
     'resnet50': (224, 224),
@@ -66,7 +65,6 @@ BACKBONE_INPUT_RESOLUTIONS = {
     'efficientnet_b3': (300, 300),
     'vgg19': (224, 224),
 }
-
 
 BACKBONE_CHANNELS = {
     'vgg16': {'e1': 64, 'e2': 128, 'e3': 256, 'e4': 512, 'bottleneck': 512},
@@ -85,20 +83,17 @@ BACKBONE_CHANNELS = {
 }
 
 DEFAULT_ARGS = {
-    'dataset_name': 'TSRS_RSNA-Epiphysis',
     'num_workers': 2,
     'backbone': 'vgg16',
     'lasa_kernels': [1, 3, 5, 7],
     'epochs': 500,
-    'batch_size': 8,
+    'batch_size': 10,
     'lr': 0.0005,
     'weight_decay': 0.0001,
     'patience': 15,
     'scale-h': 224,
     'scale-w': 224,
     'deep_supervision_weights': [0.2, 0.4, 0.6, 0.8, 1.0],
-    'focal_alpha': 0.5,
-    'focal_gamma': 2.0,
     'focal_loss_weight': 1.0,
     'dice_loss_weight': 1.0,
     'scheduler_type': 'CosineAnnealingWarmRestarts',
@@ -111,14 +106,5 @@ DEFAULT_ARGS = {
     'resume': False,
     'fine_tune_epochs': 0,
 }
-
-def get_dataset_info(dataset_name):
-    if dataset_name not in DATASET_CONFIG:
-        raise ValueError(f"Dataset '{dataset_name}' not found in configuration. Available: {list(DATASET_CONFIG.keys())}")
-    return DATASET_CONFIG[dataset_name]
-
 def get_backbone_resolution(backbone_name):
-    if backbone_name not in BACKBONE_INPUT_RESOLUTIONS:
-        print(f"Warning: Resolution for backbone '{backbone_name}' not found in BACKBONE_INPUT_RESOLUTIONS. Using default 224x224.")
-        return (224, 224)
-    return BACKBONE_INPUT_RESOLUTIONS[backbone_name]
+    return BACKBONE_INPUT_RESOLUTIONS.get(backbone_name, (224, 224))
