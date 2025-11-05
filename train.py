@@ -8,19 +8,21 @@ import torch.nn.functional as F
 from scipy.ndimage import binary_erosion, binary_dilation
 from sklearn.model_selection import KFold
 
+# --- NEW IMPORTS for comprehensive metrics ---
+import cv2
+from scipy.spatial.distance import cdist
+# -------------------------------------------
+
 project_path = '/kaggle/working/LMU-Net'
 if project_path not in sys.path: sys.path.insert(0, project_path)
 
 import config
 from light_lasa_unet import Light_LASA_Unet
 from datasets import ImageFolder, make_dataset
-# --- seg_utils is now used for ConfusionMatrix and calculate_acd ---
-from seg_utils import ConfusionMatrix
-# --- We will need calculate_acd for the test function ---
-from datasets import calculate_acd # Assuming you will move calculate_acd to datasets or keep it in seg_utils
+from seg_utils import ConfusionMatrix # Using your existing ConfusionMatrix
 from misc import AvgMeter, check_mkdir
 
-# ... (Loss functions and other helpers are unchanged) ...
+# ... (FocalLoss, DiceLoss, freeze/unfreeze functions are unchanged) ...
 class FocalLoss(nn.Module):
     def __init__(self, alpha=0.5, gamma=2): super(FocalLoss, self).__init__(); self.alpha, self.gamma = alpha, gamma
     def forward(self, i, t):
@@ -50,6 +52,27 @@ def create_boundary_mask(labels):
         boundary = np.logical_xor(dilated, eroded)
         boundary_masks.append(boundary)
     return torch.from_numpy(np.array(boundary_masks)).float().unsqueeze(1).to(labels.device)
+
+
+# --- NEW FUNCTION: calculate_acd is now defined directly in this file ---
+def calculate_acd(pred_mask, gt_mask):
+    pred_mask = pred_mask.astype(np.uint8)
+    gt_mask = gt_mask.astype(np.uint8)
+    contours_pred, _ = cv2.findContours(pred_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    contours_gt, _ = cv2.findContours(gt_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    if not contours_pred or not contours_gt: return np.nan
+    points_pred = np.vstack(contours_pred).squeeze()
+    points_gt = np.vstack(contours_gt).squeeze()
+    if points_pred.ndim == 1: points_pred = np.expand_dims(points_pred, axis=0)
+    if points_gt.ndim == 1: points_gt = np.expand_dims(points_gt, axis=0)
+    dist_matrix = cdist(points_pred, points_gt, 'euclidean')
+    dist_pred_to_gt = np.mean(np.min(dist_matrix, axis=1))
+    dist_gt_to_pred = np.mean(np.min(dist_matrix, axis=0))
+    return (dist_pred_to_gt + dist_gt_to_pred) / 2.0
+# ---------------------------------------------------------------------
+
+
+# --- (get_args, setup_logging, custom_collate_fn are unchanged) ---
 def get_args():
     parser = argparse.ArgumentParser(description='Train Segmentation Models')
     parser.add_argument('--dataset-name', type=str, required=True, choices=list(config.DATASET_CONFIG.keys()))
@@ -94,7 +117,7 @@ def custom_collate_fn(batch):
     batch = [item for item in batch if item is not None]
     return torch.utils.data.dataloader.default_collate(batch) if batch else None
 
-# This function is used for validation during training, keep it simple.
+# evaluate_model is unchanged, it's for quick validation during training
 def evaluate_model(net, data_loader, device, focal_loss_fn, dice_loss_fn, args, mode="Validating"):
     net.eval()
     confmat, loss_recorder = ConfusionMatrix(args.num_classes), AvgMeter()
@@ -109,40 +132,38 @@ def evaluate_model(net, data_loader, device, focal_loss_fn, dice_loss_fn, args, 
                 total_loss += args.deep_supervision_weights[i] * ((args.focal_loss_weight * f_l) + (args.dice_loss_weight * d_l))
             loss_recorder.update(total_loss.item(), inputs.size(0))
             confmat.update(labels.flatten(), outputs[-1].argmax(1).flatten())
-
     acc_global, acc, iu, FWIoU, mDice = confmat.compute()
-    miou = iu.mean().item() # mIoU is still useful for validation
-    logging.info(f"--- {mode} Summary --- Loss: {loss_recorder.avg:.4f}, mIoU: {miou:.4f}, Dice: {mDice:.4f}")
-    if mode.startswith("Validating"):
-        net.train()
+    miou = iu.mean().item()
+    logging.info(f"--- {mode} Summary --- Loss: {loss_recorder.avg:.4f}, OA: {acc_global.item():.4f}, mIoU: {miou:.4f}, FW-IoU: {FWIoU.item():.4f}, Dice: {mDice:.4f}")
+    if mode.startswith("Validating"): net.train()
     return acc_global.item(), miou, FWIoU.item(), mDice
 
 
-# --- ENTIRE test FUNCTION REPLACED FOR COMPREHENSIVE METRICS ---
+# --- ENTIRE test FUNCTION REPLACED ---
 def test(args):
     device = torch.device("cuda")
     exp_name = f"{args.backbone}_FreezeTune_LASA_{args.dataset_name.replace('TSRS_RSNA-', '').lower()}"
     base_exp_path = os.path.join(config.CKPT_ROOT, exp_name)
     setup_logging(base_exp_path, 'main_testing_log.log')
-    logging.info("\n" + "="*50 + f"\nSTARTING FULL EVALUATION on '{args.dataset_name}'\n" + "="*50)
+    logging.info("\n" + "="*50 + f"\nSTARTING COMPREHENSIVE EVALUATION on '{args.dataset_name}'\n" + "="*50)
 
     test_ds = ImageFolder(root=args.dataset_path, dataset_name=args.dataset_name, args=args, split='test')
     if len(test_ds) == 0:
-        logging.error(f"No images found for the 'test' split. Exiting."); return
+        logging.error("No images found for the 'test' split. Exiting."); return
     test_loader = DataLoader(test_ds, batch_size=1, shuffle=False, num_workers=args.num_workers, collate_fn=custom_collate_fn)
 
     net = Light_LASA_Unet(num_classes=args.num_classes, backbone_name=args.backbone, lasa_kernels=args.lasa_kernels).to(device)
     logging.info(f"Instantiated Light_LASA_Unet with backbone: {args.backbone}")
 
-    # --- UPDATED: Expanded metrics storage ---
-    all_fold_metrics = {'jaccard': [], 'dice': [], 'acd': [], 'accuracy': [], 'sensitivity': [], 'specificity': [], 'precision': []}
+    # Expanded metrics storage
+    all_fold_metrics = {'oa':[], 'miou':[], 'dice':[], 'fwiou':[], 'acd':[], 'sensitivity':[], 'specificity':[], 'precision':[]}
     num_folds_to_test = args.k_folds if args.k_folds > 1 else 1
 
     for fold_idx in range(num_folds_to_test):
         logging.info(f"\n--- Evaluating Fold {fold_idx} ---")
         ckpt_path = os.path.join(base_exp_path, f"fold_{fold_idx}", 'best_checkpoint.pth')
         if not os.path.exists(ckpt_path):
-            logging.warning(f"Checkpoint for fold {fold_idx} not found at {ckpt_path}. SKIPPING."); continue
+            logging.warning(f"Checkpoint for fold {fold_idx} not found. SKIPPING."); continue
 
         net.load_state_dict(torch.load(ckpt_path, map_location=device))
         net.eval()
@@ -156,18 +177,13 @@ def test(args):
                 outputs = net(image)
                 pred_np = outputs[-1].argmax(1).squeeze(0).cpu().numpy()
                 conf_matrix.update(torch.from_numpy(gt_label_np).flatten(), torch.from_numpy(pred_np).flatten())
-                # Note: Assuming calculate_acd is available from one of your imports
-                try:
-                    from seg_utils import calculate_acd
-                    acd = calculate_acd(pred_np, gt_label_np)
-                    if not np.isnan(acd): acd_scores.append(acd)
-                except ImportError:
-                    pass # If calculate_acd is not found, just skip it.
-
-        # --- NEW: Calculate all metrics from the confusion matrix ---
-        acc_global, acc, iu, FWIoU, mDice = conf_matrix.compute()
+                acd = calculate_acd(pred_np, gt_label_np)
+                if not np.isnan(acd): acd_scores.append(acd)
         
-        # Extract raw matrix to calculate TP, TN, FP, FN
+        # --- Calculate all metrics ---
+        acc_global, acc, iu, FWIoU, mDice = conf_matrix.compute()
+        miou = iu.mean().item()
+        
         h = conf_matrix.mat.float()
         eps = 1e-6
         tn, fp, fn, tp = h[0, 0], h[0, 1], h[1, 0], h[1, 1]
@@ -175,34 +191,30 @@ def test(args):
         sensitivity = (tp / (tp + fn + eps)).item()
         specificity = (tn / (tn + fp + eps)).item()
         precision = (tp / (tp + fp + eps)).item()
-        jaccard_score = iu[1].item() # Jaccard for foreground class
         mean_acd_score = np.mean(acd_scores) if acd_scores else 0.0
         
-        logging.info(f"Fold {fold_idx} Results -> Jaccard (Ω): {jaccard_score:.4f}, Dice: {mDice:.4f}, ACD: {mean_acd_score:.4f}, "
-                     f"Accuracy: {acc_global:.4f}, Sensitivity: {sensitivity:.4f}, Specificity: {specificity:.4f}, Precision: {precision:.4f}")
+        logging.info(f"Fold {fold_idx} Results -> OA: {acc_global:.4f}, mIoU: {miou:.4f}, Dice: {mDice:.4f}, FW-IoU: {FWIoU:.4f}, "
+                     f"ACD: {mean_acd_score:.4f}, Sensitivity: {sensitivity:.4f}, Specificity: {specificity:.4f}, Precision: {precision:.4f}")
 
-        all_fold_metrics['jaccard'].append(jaccard_score)
+        all_fold_metrics['oa'].append(acc_global.item())
+        all_fold_metrics['miou'].append(miou)
         all_fold_metrics['dice'].append(mDice)
+        all_fold_metrics['fwiou'].append(FWIoU.item())
         all_fold_metrics['acd'].append(mean_acd_score)
-        all_fold_metrics['accuracy'].append(acc_global.item())
         all_fold_metrics['sensitivity'].append(sensitivity)
         all_fold_metrics['specificity'].append(specificity)
         all_fold_metrics['precision'].append(precision)
 
-    # --- UPDATED: Final Summary with all metrics ---
+    # --- Final Summary with all metrics ---
     logging.info("\n" + "="*50 + "\nFINAL COMPREHENSIVE EVALUATION SUMMARY\n" + "="*50)
-    if not all_fold_metrics['jaccard']:
+    if not all_fold_metrics['miou']:
         logging.error("No models were tested."); return
 
-    logging.info(f"Metrics averaged over {len(all_fold_metrics['jaccard'])} tested fold(s).")
-    logging.info(f"Overall Accuracy:  {np.mean(all_fold_metrics['accuracy']):.4f} ± {np.std(all_fold_metrics['accuracy']):.4f}")
-    logging.info(f"Jaccard (IoU / Ω): {np.mean(all_fold_metrics['jaccard']):.4f} ± {np.std(all_fold_metrics['jaccard']):.4f}")
-    logging.info(f"Dice Score (DSC):  {np.mean(all_fold_metrics['dice']):.4f} ± {np.std(all_fold_metrics['dice']):.4f}")
-    logging.info(f"Sensitivity (Recall): {np.mean(all_fold_metrics['sensitivity']):.4f} ± {np.std(all_fold_metrics['sensitivity']):.4f}")
-    logging.info(f"Specificity:       {np.mean(all_fold_metrics['specificity']):.4f} ± {np.std(all_fold_metrics['specificity']):.4f}")
-    logging.info(f"Precision:         {np.mean(all_fold_metrics['precision']):.4f} ± {np.std(all_fold_metrics['precision']):.4f}")
-    if acd_scores: # Only print ACD if it was calculated
-        logging.info(f"Avg Contour Distance (ACD): {np.mean(all_fold_metrics['acd']):.4f} ± {np.std(all_fold_metrics['acd']):.4f}")
+    logging.info(f"Metrics averaged over {len(all_fold_metrics['miou'])} tested fold(s).")
+    for key, values in all_fold_metrics.items():
+        mean = np.mean(values)
+        std = np.std(values)
+        logging.info(f"Average {key.capitalize():<12}: {mean:.4f} ± {std:.4f}")
     logging.info("="*50)
 
 
