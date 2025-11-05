@@ -54,6 +54,18 @@ DATASET_CONFIG = {
         'structure': 'MONTGOMERY',
         'num_classes': 2,
     },
+    'CVC-ColonDB': {
+        'path': os.path.join(DATA_ROOT, 'CVC-ColonDB'), # Assuming this folder name
+        'structure': 'FLAT_SPLIT', 'num_classes': 2,
+    },
+    'ETIS-LaribPolypDB': {
+        'path': os.path.join(DATA_ROOT, 'ETIS-LaribPolypDB'), # Assuming this folder name
+        'structure': 'FLAT_SPLIT', 'num_classes': 2,
+    },
+    'Kvasir-SEG': {
+        'path': os.path.join(DATA_ROOT, 'Kvasir-SEG'), # Assuming this folder name
+        'structure': 'FLAT_SPLIT', 'num_classes': 2,
+    },
 }
 
 # --- (Rest of file is unchanged) ---
