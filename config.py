@@ -5,10 +5,8 @@ import os
 DATA_ROOT = '/kaggle/working/LMU-Net/data'
 CKPT_ROOT = '/kaggle/working/LMU-Net/ckpt'
 
-# --- Add these two lines ---
 FOCAL_ALPHA = 0.5
 FOCAL_GAMMA = 2.0
-# ---------------------------
 
 os.makedirs(DATA_ROOT, exist_ok=True)
 os.makedirs(CKPT_ROOT, exist_ok=True)
@@ -50,14 +48,23 @@ DATASET_CONFIG = {
         'structure': 'FLAT_SPLIT',
         'num_classes': 6,
     },
+    # --- NEW DATASET ENTRY ---
+    'MontgomeryCounty': {
+        # Assuming the dataset is in a folder named 'NLM-MontgomeryCXRSet' as per the official zip
+        'path': os.path.join(DATA_ROOT, 'NLM-MontgomeryCXRSet'),
+        'structure': 'MONTGOMERY', # A unique structure identifier
+        'num_classes': 2, # 1 for background, 1 for lungs
+    },
+    # -------------------------
 }
 
+# --- (Rest of the config.py file is unchanged) ---
 BACKBONE_INPUT_RESOLUTIONS = {
     'vgg16': (224, 224),
     'resnet50': (224, 224),
     'inception_v3': (299, 299),
     'efficientnet_b0': (224, 224),
-    'efficientnet_b3': (300, 300), 
+    'efficientnet_b3': (300, 300),
     'vgg19': (224, 224),
 }
 
@@ -70,57 +77,40 @@ BACKBONE_CHANNELS = {
     'efficientnet_b0': {'e1': 24, 'e2': 40, 'e3': 80, 'e4': 112, 'bottleneck': 320},
     'efficientnet_b3': {'e1': 32, 'e2': 48, 'e3': 136, 'e4': 232, 'bottleneck': 384},
     'efficientnet_b4': {
-    'e1': 24,      
-    'e2': 32,      
-    'e3': 56,      
-    'e4': 112,     
+    'e1': 24,
+    'e2': 32,
+    'e3': 56,
+    'e4': 112,
     'bottleneck': 1792 },
     'mobilenet_v2': {'e1': 16, 'e2': 24, 'e3': 32, 'e4': 96, 'bottleneck': 1280},
 }
 
-# --- Default Training Parameters ---
 DEFAULT_ARGS = {
     'dataset_name': 'TSRS_RSNA-Epiphysis',
-    'num_workers': 2, 
+    'num_workers': 2,
     'backbone': 'vgg16',
     'lasa_kernels': [1, 3, 5, 7],
-
-    'epochs': 50,
-    'batch_size': 4,
+    'epochs': 500,
+    'batch_size': 8,
     'lr': 0.0005,
     'weight_decay': 0.0001,
     'patience': 15,
-
-    # Defaults for scaling/resolution will be backbone-dependent
-    'scale-h': 224, 
+    'scale-h': 224,
     'scale-w': 224,
-
     'deep_supervision_weights': [0.2, 0.4, 0.6, 0.8, 1.0],
-
     'focal_alpha': 0.5,
     'focal_gamma': 2.0,
     'focal_loss_weight': 1.0,
     'dice_loss_weight': 1.0,
-
-    'min_lesion_area_pixels': 576,
-    'expansion_factor': 1.5,
-    'min_bbox_h': 32,
-    'min_bbox_w': 32,
-    'wavelet_type': 'haar',
-    'wavelet_level': 1,
-    'wavelet_detail_scale': 1.5,
     'scheduler_type': 'CosineAnnealingWarmRestarts',
-
     'scheduler_patience': 5,
     'scheduler_factor': 0.5,
     'scheduler_min_lr': 1e-6,
-    'scheduler_T0': 10, 
-    'scheduler_T_mult': 2, 
-
+    'scheduler_T0': 10,
+    'scheduler_T_mult': 2,
     'test_only': False,
     'resume': False,
-    
-    'fine_tune_epochs': 0, 
+    'fine_tune_epochs': 0,
 }
 
 def get_dataset_info(dataset_name):
@@ -131,5 +121,5 @@ def get_dataset_info(dataset_name):
 def get_backbone_resolution(backbone_name):
     if backbone_name not in BACKBONE_INPUT_RESOLUTIONS:
         print(f"Warning: Resolution for backbone '{backbone_name}' not found in BACKBONE_INPUT_RESOLUTIONS. Using default 224x224.")
-        return (224, 224) 
+        return (224, 224)
     return BACKBONE_INPUT_RESOLUTIONS[backbone_name]
