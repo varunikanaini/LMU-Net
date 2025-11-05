@@ -9,9 +9,7 @@ Created on 2022-12-13 09:54:12
 
 import numpy as np
 import torch
-import cv2
-import scipy
-from scipy.spatial.distance import cdist
+
 
 class ConfusionMatrix(object):
     def __init__(self, num_classes):
@@ -133,28 +131,3 @@ def blend_seg(img, seg, color_map=None, alpha=0.5, ignore_index=0):
 
     return img * alpha_mask + seg_rgb * (1. - alpha_mask)
 
-def calculate_acd(pred_mask, gt_mask):
-    """
-    Calculates the Average Contour Distance (ACD) between two binary masks.
-    """
-    pred_mask = pred_mask.astype(np.uint8)
-    gt_mask = gt_mask.astype(np.uint8)
-
-    contours_pred, _ = cv2.findContours(pred_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-    contours_gt, _ = cv2.findContours(gt_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-
-    if not contours_pred or not contours_gt:
-        return np.nan # Use NaN for cases where a contour is missing
-
-    points_pred = np.vstack(contours_pred).squeeze()
-    points_gt = np.vstack(contours_gt).squeeze()
-
-    if points_pred.ndim == 1: points_pred = np.expand_dims(points_pred, axis=0)
-    if points_gt.ndim == 1: points_gt = np.expand_dims(points_gt, axis=0)
-
-    dist_matrix = cdist(points_pred, points_gt, 'euclidean')
-
-    dist_pred_to_gt = np.mean(np.min(dist_matrix, axis=1))
-    dist_gt_to_pred = np.mean(np.min(dist_matrix, axis=0))
-
-    return (dist_pred_to_gt + dist_gt_to_pred) / 2.0
