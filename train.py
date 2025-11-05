@@ -14,9 +14,12 @@ if project_path not in sys.path: sys.path.insert(0, project_path)
 import config
 from light_lasa_unet import Light_LASA_Unet
 from datasets import ImageFolder, make_dataset
-from seg_utils import ConfusionMatrix
+# --- UPDATED IMPORTS ---
+from seg_utils import ConfusionMatrix, calculate_acd
+# ---------------------
 from misc import AvgMeter, check_mkdir
 
+# ... (FocalLoss, DiceLoss, freeze/unfreeze functions are unchanged) ...
 class FocalLoss(nn.Module):
     def __init__(self, alpha=0.5, gamma=2): super(FocalLoss, self).__init__(); self.alpha, self.gamma = alpha, gamma
     def forward(self, i, t):
@@ -51,7 +54,8 @@ def create_boundary_mask(labels):
         boundary_masks.append(boundary)
     return torch.from_numpy(np.array(boundary_masks)).float().unsqueeze(1).to(labels.device)
 
-# --- Argument Parsing (No changes needed here) ---
+
+# --- (get_args, setup_logging, custom_collate_fn are unchanged) ---
 def get_args():
     parser = argparse.ArgumentParser(description='Train Segmentation Models')
     parser.add_argument('--dataset-name', type=str, required=True, choices=list(config.DATASET_CONFIG.keys()))
@@ -59,7 +63,6 @@ def get_args():
     parser.add_argument('--epochs', type=int, default=150)
     parser.add_argument('--batch-size', type=int, default=8)
     parser.add_argument('--lr', type=float, default=1e-4)
-    # ... (rest of args are fine)
     parser.add_argument('--weight-decay', type=float, default=1e-4)
     parser.add_argument('--patience', type=int, default=30)
     parser.add_argument('--lasa-kernels', type=int, nargs='+', default=[1, 3, 5, 7])
@@ -89,21 +92,16 @@ def get_args():
     for k, v in config.DEFAULT_ARGS.items():
         if not hasattr(args, k): setattr(args, k, v)
     return args
-
-# --- Logging and Collate ---
 def setup_logging(log_dir, filename='training.log'):
     for h in logging.root.handlers[:]: logging.root.removeHandler(h)
     logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s',
                         handlers=[logging.FileHandler(os.path.join(log_dir, filename)), logging.StreamHandler()])
-
 def custom_collate_fn(batch):
     batch = [item for item in batch if item is not None]
     return torch.utils.data.dataloader.default_collate(batch) if batch else None
 
 
-# --- Evaluation Function (No changes needed here) ---
 def evaluate_model(net, data_loader, device, focal_loss_fn, dice_loss_fn, args, mode="Validating"):
-    # ... (this function is fine)
     net.eval()
     confmat, loss_recorder = ConfusionMatrix(args.num_classes), AvgMeter()
     with torch.no_grad():
@@ -116,61 +114,97 @@ def evaluate_model(net, data_loader, device, focal_loss_fn, dice_loss_fn, args, 
                 f_l, d_l = focal_loss_fn(pred, labels.long()), dice_loss_fn(pred, labels.long())
                 total_loss += args.deep_supervision_weights[i] * ((args.focal_loss_weight * f_l) + (args.dice_loss_weight * d_l))
             loss_recorder.update(total_loss.item(), inputs.size(0))
+            # Correctly update based on your seg_utils.py
             confmat.update(labels.flatten(), outputs[-1].argmax(1).flatten())
-    oa, _, iou, fwiou, dice = confmat.compute()
-    miou = iou.mean().item()
-    oa = oa.item()
-    logging.info(f"--- {mode} Summary --- Loss: {loss_recorder.avg:.4f}, OA: {oa:.4f}, mIoU: {miou:.4f}, FW-IoU: {fwiou.item():.4f}, Dice: {dice:.4f}")
+
+    # Correctly unpack based on your seg_utils.py
+    acc_global, _, iu, FWIoU, mDice = confmat.compute()
+    miou = iu.mean().item()
+    logging.info(f"--- {mode} Summary --- Loss: {loss_recorder.avg:.4f}, OA: {acc_global.item():.4f}, mIoU: {miou:.4f}, FW-IoU: {FWIoU.item():.4f}, Dice: {mDice:.4f}")
     if mode.startswith("Validating"):
         net.train()
-    return oa, miou, fwiou.item(), dice
+    return acc_global.item(), miou, FWIoU.item(), mDice
 
-# --- Testing Function ---
+
+# --- ENTIRE test FUNCTION REPLACED ---
 def test(args):
     device = torch.device("cuda")
     exp_name = f"{args.backbone}_FreezeTune_LASA_{args.dataset_name.replace('TSRS_RSNA-', '').lower()}"
     base_exp_path = os.path.join(config.CKPT_ROOT, exp_name)
-    setup_logging(base_exp_path, 'main_training_log.log')
-    logging.info("\n" + "="*50 + "\n" + " " * 20 + "STARTING TESTING" + "\n" + "="*50)
+    setup_logging(base_exp_path, 'main_testing_log.log') # Use a different log file
+    logging.info("\n" + "="*50 + f"\nSTARTING EVALUATION on '{args.dataset_name}'\n" + "="*50)
 
-    # --- FIX: Pass the base dataset path, not the hardcoded '/test' subdirectory ---
+    # --- Data Loader ---
     test_ds = ImageFolder(root=args.dataset_path, dataset_name=args.dataset_name, args=args, split='test')
+    if len(test_ds) == 0:
+        logging.error(f"No images found for the 'test' split. Exiting.")
+        return
     test_loader = DataLoader(test_ds, batch_size=1, shuffle=False, num_workers=args.num_workers, collate_fn=custom_collate_fn)
 
+    # --- Model ---
     net = Light_LASA_Unet(num_classes=args.num_classes, backbone_name=args.backbone, lasa_kernels=args.lasa_kernels).to(device)
-    logging.info(f"Successfully instantiated Light_LASA_Unet with backbone: {args.backbone}")
-    # ... (rest of function is fine)
-    focal_loss_fn = FocalLoss(alpha=config.FOCAL_ALPHA, gamma=config.FOCAL_GAMMA).to(device)
-    dice_loss_fn = DiceLoss().to(device)
-    all_fold_metrics = {'oa': [], 'miou': [], 'fwiou': [], 'dice': []}
+    logging.info(f"Instantiated Light_LASA_Unet with backbone: {args.backbone}")
+
+    # --- Metrics Storage ---
+    all_fold_metrics = {'jaccard': [], 'dice': [], 'acd': []}
     num_folds_to_test = args.k_folds if args.k_folds > 1 else 1
+
     for fold_idx in range(num_folds_to_test):
+        logging.info(f"\n--- Evaluating Fold {fold_idx} ---")
         fold_exp_path = os.path.join(base_exp_path, f"fold_{fold_idx}")
         ckpt_path = os.path.join(fold_exp_path, 'best_checkpoint.pth')
+
         if not os.path.exists(ckpt_path):
-            logging.warning(f"Checkpoint for fold {fold_idx} not found at {ckpt_path}. Skipping.")
+            logging.warning(f"Checkpoint for fold {fold_idx} not found at {ckpt_path}. SKIPPING.")
             continue
-        logging.info(f"--- Loading model for Fold {fold_idx} from {ckpt_path} ---")
+
         net.load_state_dict(torch.load(ckpt_path, map_location=device))
-        oa, miou, fwiou, dice = evaluate_model(net, test_loader, device, focal_loss_fn, dice_loss_fn, args, mode=f"Testing Fold {fold_idx}")
-        all_fold_metrics['oa'].append(oa)
-        all_fold_metrics['miou'].append(miou)
-        all_fold_metrics['fwiou'].append(fwiou)
-        all_fold_metrics['dice'].append(dice)
-    logging.info("\n" + "="*50 + "\n" + " " * 15 + "FINAL TESTING SUMMARY" + "\n" + "="*50)
-    if not all_fold_metrics['miou']:
+        net.eval()
+
+        # --- Evaluation Loop for the current fold ---
+        conf_matrix = ConfusionMatrix(args.num_classes)
+        acd_scores = []
+        with torch.no_grad():
+            for sample in tqdm(test_loader, desc=f"Testing Fold {fold_idx}"):
+                if sample is None: continue
+                
+                image = sample['image'].to(device)
+                gt_label_np = sample['label'].squeeze(0).numpy()
+                
+                outputs = net(image)
+                pred_np = outputs[-1].argmax(1).squeeze(0).cpu().numpy()
+
+                conf_matrix.update(torch.from_numpy(gt_label_np).flatten(), torch.from_numpy(pred_np).flatten())
+                
+                acd = calculate_acd(pred_np, gt_label_np)
+                if not np.isnan(acd):
+                    acd_scores.append(acd)
+        
+        # --- Compute metrics for the current fold ---
+        _, _, iu, _, mDice = conf_matrix.compute()
+        jaccard_score = iu[1].item() # Jaccard for foreground class (class 1)
+        mean_acd_score = np.mean(acd_scores) if acd_scores else 0.0
+        
+        logging.info(f"Fold {fold_idx} Results -> Jaccard (Ω): {jaccard_score:.4f}, Dice (DSC): {mDice:.4f}, ACD: {mean_acd_score:.4f}")
+
+        all_fold_metrics['jaccard'].append(jaccard_score)
+        all_fold_metrics['dice'].append(mDice)
+        all_fold_metrics['acd'].append(mean_acd_score)
+
+    # --- Final Summary ---
+    logging.info("\n" + "="*50 + "\nFINAL EVALUATION SUMMARY\n" + "="*50)
+    if not all_fold_metrics['jaccard']:
         logging.error("No models were tested. Cannot compute final metrics.")
         return
-    logging.info(f"Metrics calculated over {len(all_fold_metrics['miou'])} tested fold(s).")
-    logging.info(f"Overall Accuracy (OA): {np.mean(all_fold_metrics['oa']):.4f} ± {np.std(all_fold_metrics['oa']):.4f}")
-    logging.info(f"Mean IoU (mIoU):     {np.mean(all_fold_metrics['miou']):.4f} ± {np.std(all_fold_metrics['miou']):.4f}")
-    logging.info(f"FW-IoU:              {np.mean(all_fold_metrics['fwiou']):.4f} ± {np.std(all_fold_metrics['fwiou']):.4f}")
-    logging.info(f"Dice Score:          {np.mean(all_fold_metrics['dice']):.4f} ± {np.std(all_fold_metrics['dice']):.4f}")
+
+    logging.info(f"Metrics averaged over {len(all_fold_metrics['jaccard'])} tested fold(s).")
+    logging.info(f"Average Jaccard (IoU / Ω): {np.mean(all_fold_metrics['jaccard']):.4f} ± {np.std(all_fold_metrics['jaccard']):.4f}")
+    logging.info(f"Average Dice Score (DSC):  {np.mean(all_fold_metrics['dice']):.4f} ± {np.std(all_fold_metrics['dice']):.4f}")
+    logging.info(f"Average Contour Distance (ACD): {np.mean(all_fold_metrics['acd']):.4f} ± {np.std(all_fold_metrics['acd']):.4f}")
     logging.info("="*50)
 
-# --- train_fold Function (No changes needed here) ---
+# --- (train_fold and main functions are unchanged and correct from your finalized version) ---
 def train_fold(args, fold_idx, train_imgs, val_imgs):
-    # ... (this function is fine because it receives the image lists directly)
     device = torch.device("cuda")
     exp_name = f"{args.backbone}_FreezeTune_LASA_{args.dataset_name.replace('TSRS_RSNA-', '').lower()}"
     fold_exp_path = os.path.join(config.CKPT_ROOT, exp_name, f"fold_{fold_idx}")
@@ -254,28 +288,20 @@ def train_fold(args, fold_idx, train_imgs, val_imgs):
 
 def main():
     args = get_args()
-
     if args.test_only:
         test(args)
         return
-
     exp_name = f"{args.backbone}_FreezeTune_LASA_{args.dataset_name.replace('TSRS_RSNA-', '').lower()}"
     base_exp_path = os.path.join(config.CKPT_ROOT, exp_name)
     check_mkdir(base_exp_path)
     setup_logging(base_exp_path, 'main_training_log.log')
     logging.info(f"Starting experiment: '{exp_name}'\nArguments: {vars(args)}")
-
     if args.k_folds > 1:
-        # This k-fold logic needs a small fix to work with the new dataset loader
-        # It needs to gather all images first
-        # We'll add a special 'all' split to make_dataset for this purpose
         all_imgs = np.array(make_dataset(args.dataset_path, args.dataset_name, split='all'))
         if len(all_imgs) == 0:
-            logging.error(f"No images found for K-Fold splitting. Check dataset path and `make_dataset` for {args.dataset_name}.")
+            logging.error(f"No images found for K-Fold splitting. Check dataset path for {args.dataset_name}.")
             return
-            
         kf = KFold(n_splits=args.k_folds, shuffle=True, random_state=args.random_state)
-        # ... (rest of k-fold logic is fine)
         kfold_state_path = os.path.join(base_exp_path, 'kfold_state.json')
         start_fold, all_fold_metrics = 0, {}
         if args.resume and os.path.exists(kfold_state_path):
@@ -297,12 +323,8 @@ def main():
         logging.info(f"Average Validation mIoU: {mean_mIoU:.4f} ± {std_mIoU:.4f}")
     else:
         logging.info("Running a single train/validation split (k_folds=1).")
-        # --- THE IMPORTANT FIX ---
-        # Pass the base dataset path directly to ImageFolder.
-        # Do NOT add '/train' or '/val'. The datasets.py script handles this now.
         train_ds = ImageFolder(root=args.dataset_path, dataset_name=args.dataset_name, args=args, split='train')
         val_ds = ImageFolder(root=args.dataset_path, dataset_name=args.dataset_name, args=args, split='val')
-        # -------------------------
         train_fold(args, 0, train_ds.imgs, val_ds.imgs)
 
 if __name__ == '__main__':
