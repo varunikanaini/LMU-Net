@@ -8,10 +8,8 @@ import torch.nn.functional as F
 from scipy.ndimage import binary_erosion, binary_dilation
 from sklearn.model_selection import KFold
 
-# --- NEW IMPORTS for comprehensive metrics ---
 import cv2
 from scipy.spatial.distance import cdist
-# -------------------------------------------
 
 project_path = '/kaggle/working/LMU-Net'
 if project_path not in sys.path: sys.path.insert(0, project_path)
@@ -19,10 +17,10 @@ if project_path not in sys.path: sys.path.insert(0, project_path)
 import config
 from light_lasa_unet import Light_LASA_Unet
 from datasets import ImageFolder, make_dataset
-from seg_utils import ConfusionMatrix # Using your existing ConfusionMatrix
+from seg_utils import ConfusionMatrix
 from misc import AvgMeter, check_mkdir
 
-# ... (FocalLoss, DiceLoss, freeze/unfreeze functions are unchanged) ...
+# ... (All functions before train_fold are unchanged) ...
 class FocalLoss(nn.Module):
     def __init__(self, alpha=0.5, gamma=2): super(FocalLoss, self).__init__(); self.alpha, self.gamma = alpha, gamma
     def forward(self, i, t):
@@ -52,9 +50,6 @@ def create_boundary_mask(labels):
         boundary = np.logical_xor(dilated, eroded)
         boundary_masks.append(boundary)
     return torch.from_numpy(np.array(boundary_masks)).float().unsqueeze(1).to(labels.device)
-
-
-# --- NEW FUNCTION: calculate_acd is now defined directly in this file ---
 def calculate_acd(pred_mask, gt_mask):
     pred_mask = pred_mask.astype(np.uint8)
     gt_mask = gt_mask.astype(np.uint8)
@@ -69,10 +64,6 @@ def calculate_acd(pred_mask, gt_mask):
     dist_pred_to_gt = np.mean(np.min(dist_matrix, axis=1))
     dist_gt_to_pred = np.mean(np.min(dist_matrix, axis=0))
     return (dist_pred_to_gt + dist_gt_to_pred) / 2.0
-# ---------------------------------------------------------------------
-
-
-# --- (get_args, setup_logging, custom_collate_fn are unchanged) ---
 def get_args():
     parser = argparse.ArgumentParser(description='Train Segmentation Models')
     parser.add_argument('--dataset-name', type=str, required=True, choices=list(config.DATASET_CONFIG.keys()))
@@ -116,8 +107,6 @@ def setup_logging(log_dir, filename='training.log'):
 def custom_collate_fn(batch):
     batch = [item for item in batch if item is not None]
     return torch.utils.data.dataloader.default_collate(batch) if batch else None
-
-# evaluate_model is unchanged, it's for quick validation during training
 def evaluate_model(net, data_loader, device, focal_loss_fn, dice_loss_fn, args, mode="Validating"):
     net.eval()
     confmat, loss_recorder = ConfusionMatrix(args.num_classes), AvgMeter()
@@ -137,37 +126,27 @@ def evaluate_model(net, data_loader, device, focal_loss_fn, dice_loss_fn, args, 
     logging.info(f"--- {mode} Summary --- Loss: {loss_recorder.avg:.4f}, OA: {acc_global.item():.4f}, mIoU: {miou:.4f}, FW-IoU: {FWIoU.item():.4f}, Dice: {mDice:.4f}")
     if mode.startswith("Validating"): net.train()
     return acc_global.item(), miou, FWIoU.item(), mDice
-
-
-# --- ENTIRE test FUNCTION REPLACED ---
 def test(args):
     device = torch.device("cuda")
     exp_name = f"{args.backbone}_FreezeTune_LASA_{args.dataset_name.replace('TSRS_RSNA-', '').lower()}"
     base_exp_path = os.path.join(config.CKPT_ROOT, exp_name)
     setup_logging(base_exp_path, 'main_testing_log.log')
     logging.info("\n" + "="*50 + f"\nSTARTING COMPREHENSIVE EVALUATION on '{args.dataset_name}'\n" + "="*50)
-
     test_ds = ImageFolder(root=args.dataset_path, dataset_name=args.dataset_name, args=args, split='test')
     if len(test_ds) == 0:
         logging.error("No images found for the 'test' split. Exiting."); return
     test_loader = DataLoader(test_ds, batch_size=1, shuffle=False, num_workers=args.num_workers, collate_fn=custom_collate_fn)
-
     net = Light_LASA_Unet(num_classes=args.num_classes, backbone_name=args.backbone, lasa_kernels=args.lasa_kernels).to(device)
     logging.info(f"Instantiated Light_LASA_Unet with backbone: {args.backbone}")
-
-    # Expanded metrics storage
     all_fold_metrics = {'oa':[], 'miou':[], 'dice':[], 'fwiou':[], 'acd':[], 'sensitivity':[], 'specificity':[], 'precision':[]}
     num_folds_to_test = args.k_folds if args.k_folds > 1 else 1
-
     for fold_idx in range(num_folds_to_test):
         logging.info(f"\n--- Evaluating Fold {fold_idx} ---")
         ckpt_path = os.path.join(base_exp_path, f"fold_{fold_idx}", 'best_checkpoint.pth')
         if not os.path.exists(ckpt_path):
             logging.warning(f"Checkpoint for fold {fold_idx} not found. SKIPPING."); continue
-
         net.load_state_dict(torch.load(ckpt_path, map_location=device))
         net.eval()
-
         conf_matrix = ConfusionMatrix(args.num_classes)
         acd_scores = []
         with torch.no_grad():
@@ -179,23 +158,17 @@ def test(args):
                 conf_matrix.update(torch.from_numpy(gt_label_np).flatten(), torch.from_numpy(pred_np).flatten())
                 acd = calculate_acd(pred_np, gt_label_np)
                 if not np.isnan(acd): acd_scores.append(acd)
-        
-        # --- Calculate all metrics ---
         acc_global, acc, iu, FWIoU, mDice = conf_matrix.compute()
         miou = iu.mean().item()
-        
         h = conf_matrix.mat.float()
         eps = 1e-6
         tn, fp, fn, tp = h[0, 0], h[0, 1], h[1, 0], h[1, 1]
-
         sensitivity = (tp / (tp + fn + eps)).item()
         specificity = (tn / (tn + fp + eps)).item()
         precision = (tp / (tp + fp + eps)).item()
         mean_acd_score = np.mean(acd_scores) if acd_scores else 0.0
-        
         logging.info(f"Fold {fold_idx} Results -> OA: {acc_global:.4f}, mIoU: {miou:.4f}, Dice: {mDice:.4f}, FW-IoU: {FWIoU:.4f}, "
                      f"ACD: {mean_acd_score:.4f}, Sensitivity: {sensitivity:.4f}, Specificity: {specificity:.4f}, Precision: {precision:.4f}")
-
         all_fold_metrics['oa'].append(acc_global.item())
         all_fold_metrics['miou'].append(miou)
         all_fold_metrics['dice'].append(mDice)
@@ -204,12 +177,9 @@ def test(args):
         all_fold_metrics['sensitivity'].append(sensitivity)
         all_fold_metrics['specificity'].append(specificity)
         all_fold_metrics['precision'].append(precision)
-
-    # --- Final Summary with all metrics ---
     logging.info("\n" + "="*50 + "\nFINAL COMPREHENSIVE EVALUATION SUMMARY\n" + "="*50)
     if not all_fold_metrics['miou']:
         logging.error("No models were tested."); return
-
     logging.info(f"Metrics averaged over {len(all_fold_metrics['miou'])} tested fold(s).")
     for key, values in all_fold_metrics.items():
         mean = np.mean(values)
@@ -218,7 +188,6 @@ def test(args):
     logging.info("="*50)
 
 
-# --- (train_fold and main functions remain unchanged) ---
 def train_fold(args, fold_idx, train_imgs, val_imgs):
     device = torch.device("cuda")
     exp_name = f"{args.backbone}_FreezeTune_LASA_{args.dataset_name.replace('TSRS_RSNA-', '').lower()}"
@@ -239,6 +208,7 @@ def train_fold(args, fold_idx, train_imgs, val_imgs):
     start_epoch, best_mIoU, patience_counter = 0, 0.0, 0
     best_ckpt_path = os.path.join(fold_exp_path, 'best_checkpoint.pth')
     latest_ckpt_path = os.path.join(fold_exp_path, 'latest_checkpoint.pth')
+    
     if args.resume and os.path.exists(latest_ckpt_path):
         try:
             ckpt = torch.load(latest_ckpt_path, map_location=device)
@@ -252,6 +222,7 @@ def train_fold(args, fold_idx, train_imgs, val_imgs):
         except Exception as e:
             logging.error(f"Could not resume fold {fold_idx}: {e}. Starting this fold from scratch.")
             start_epoch = 0
+            
     if start_epoch < args.fine_tune_epochs: freeze_backbone(net)
     else: unfreeze_backbone(net)
     for epoch in range(start_epoch, args.epochs):
@@ -262,31 +233,52 @@ def train_fold(args, fold_idx, train_imgs, val_imgs):
             scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=args.scheduler_T0, T_mult=2, eta_min=1e-6)
             logging.info(f"--- Switched to Phase 2. New LR: {new_lr} ---")
         net.train()
+        
         loss_recorder = AvgMeter()
+        train_confmat = ConfusionMatrix(args.num_classes)
         train_iterator = tqdm(train_loader, desc=f"Epoch {epoch+1}/{args.epochs} (Fold {fold_idx})")
+        
         for data in train_iterator:
             if data is None: continue
             inputs, labels = data['image'].to(device), data['label'].to(device)
             labels_float_unsqueezed = labels.unsqueeze(1).float()
             optimizer.zero_grad(set_to_none=True)
+            
             outputs = net(inputs)
+            
+            # --- ADDITION: Update training confusion matrix with the final prediction ---
+            with torch.no_grad():
+                train_confmat.update(labels.flatten(), outputs[-1].argmax(1).flatten())
+            # -------------------------------------------------------------------------
+            
             main_loss = 0
             for head_idx, pred_output in enumerate(outputs):
                 f_loss = focal_loss_fn(pred_output, labels.long())
                 d_loss = dice_loss_fn(pred_output, labels.long())
                 main_loss += args.deep_supervision_weights[head_idx] * ((args.focal_loss_weight * f_loss) + (args.dice_loss_weight * d_loss))
+            
             boundary_mask = create_boundary_mask(labels_float_unsqueezed)
             final_pred_logits = outputs[-1][:, 1, :, :].unsqueeze(1)
             boundary_bce_loss = F.binary_cross_entropy_with_logits(final_pred_logits, boundary_mask, reduction='none')
             boundary_loss = (boundary_bce_loss * boundary_mask).mean()
+            
             total_loss = main_loss + (args.boundary_loss_weight * boundary_loss)
+            
             total_loss.backward()
             optimizer.step()
+            
             loss_recorder.update(total_loss.item(), inputs.size(0))
             train_iterator.set_postfix(loss=loss_recorder.avg)
+        
+        train_acc_global, _, train_iu, _, train_mDice = train_confmat.compute()
+        train_miou = train_iu.mean().item()
+        logging.info(f"--- Train Summary (Epoch {epoch+1}) --- Loss: {loss_recorder.avg:.4f}, OA: {train_acc_global.item():.4f}, mIoU: {train_miou:.4f}, Dice: {train_mDice:.4f}")
+
         _, current_mIoU, _, _ = evaluate_model(net, val_loader, device, focal_loss_fn, dice_loss_fn, args, mode=f"Validating Fold {fold_idx}")
+        
         if isinstance(scheduler, optim.lr_scheduler.ReduceLROnPlateau): scheduler.step(current_mIoU)
         else: scheduler.step()
+        
         if current_mIoU > best_mIoU:
             best_mIoU, patience_counter = current_mIoU, 0
             torch.save(net.state_dict(), best_ckpt_path)
@@ -294,10 +286,13 @@ def train_fold(args, fold_idx, train_imgs, val_imgs):
         else:
             patience_counter += 1
             logging.info(f"⚠️ mIoU did not improve for {patience_counter} epoch(s). Best: {best_mIoU:.4f}")
+        
         torch.save({'epoch': epoch, 'model_state_dict': net.state_dict(), 'optimizer_state_dict': optimizer.state_dict(), 'scheduler_state_dict': scheduler.state_dict(), 'best_mIoU': best_mIoU, 'patience_counter': patience_counter}, latest_ckpt_path)
+
         if patience_counter >= args.patience:
             logging.info(f"Early stopping triggered for fold {fold_idx}.")
             break
+            
     logging.info(f"===== Finished Fold {fold_idx} ===== Best Val mIoU: {best_mIoU:.4f}")
     return best_mIoU
 
