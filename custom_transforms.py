@@ -8,7 +8,7 @@ from torchvision.transforms import functional as TF
 from scipy.ndimage import map_coordinates
 from scipy.ndimage import gaussian_filter
 import cv2
-
+import numbers
 
 class RandomHorizontalFlip(object):
     def __init__(self, p=0.5):
