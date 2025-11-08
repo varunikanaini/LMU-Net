@@ -112,6 +112,9 @@ def make_dataset(root, dataset_name, split='train', val_size=0.15, test_size=0.1
     if not all_pairs:
         print(f"Warning: Found 0 image-mask pairs for '{dataset_name}' at root '{root}'.")
         return []
+    
+    if split == 'all':
+        return all_pairs
 
     train_val_pairs, test_pairs = train_test_split(all_pairs, test_size=test_size, random_state=random_state)
     val_proportion = val_size / (1 - test_size)
