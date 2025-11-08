@@ -86,26 +86,19 @@ def get_args():
     parser.add_argument('--num-workers', type=int, default=2)
     parser.add_argument('--fine-tune-epochs', type=int, default=40)
     parser.add_argument('--boundary-loss-weight', type=float, default=1.5, help='Weight for the dedicated boundary loss.')
-    parser.add_argument('--scale_h', type=int, default=None, help='Target height for image resizing.')
-    parser.add_argument('--scale_w', type=int, default=None, help='Target width for image resizing.')
+    parser.add_argument('--scale-h', type=int, default=None, help='Target height for image resizing.')
+    parser.add_argument('--scale-w', type=int, default=None, help='Target width for image resizing.')
     parser.add_argument('--k-folds', type=int, default=1, help='Number of folds for cross-validation. Default is 1 (no k-fold).')
     parser.add_argument('--random-state', type=int, default=42, help='Random state for KFold split for reproducibility.')
     args = parser.parse_args()
     dataset_info = config.DATASET_CONFIG[args.dataset_name]
-    dataset_info = config.DATASET_CONFIG[args.dataset_name]
     args.dataset_path, args.num_classes = dataset_info['path'], dataset_info['num_classes']
-
+    if args.scale_h is None or args.scale_w is None:
+        res_h, res_w = config.get_backbone_resolution(args.backbone)
+        if args.scale_h is None: args.scale_h = res_h
+        if args.scale_w is None: args.scale_w = res_w
     for k, v in config.DEFAULT_ARGS.items():
-        if not hasattr(args, k) or getattr(args, k) is None:
-            setattr(args, k, v)
-            
-    dataset_cfg = config.DATASET_CONFIG.get(args.dataset_name, {})
-    if 'size' in dataset_cfg:
-        if args.scale_h == config.DEFAULT_ARGS['scale_h']: # Check if it's still the fallback default
-             args.scale_h = dataset_cfg['size'][1]
-        if args.scale_w == config.DEFAULT_ARGS['scale_w']: # Check if it's still the fallback default
-             args.scale_w = dataset_cfg['size'][0]
-    
+        if not hasattr(args, k): setattr(args, k, v)
     return args
 def setup_logging(log_dir, filename='training.log'):
     for h in logging.root.handlers[:]: logging.root.removeHandler(h)
