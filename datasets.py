@@ -152,7 +152,7 @@ class ImageFolder(data.Dataset):
                     tr.RandomResizedCrop(size=image_size, scale=(0.8, 1.0)), 
                     tr.RandomRotation(degrees=15),
                     tr.RandomHorizontalFlip(),
-                    tr.RandomGaussianBlur(p=0.5),
+                    tr.RandomGaussianBlur(),
                     tr.Normalize(mean=self.mean, std=self.std),
                     tr.ToTensor()
                 ])
