@@ -33,6 +33,10 @@ DATASET_CONFIG = {
         'path': os.path.join(DATA_ROOT, 'TSRS_RSNA-Epiphysis'),
         'structure': 'TSRS_RSNA', 'num_classes': 2, 'size': (428, 428)
     },
+    'TSRS_RSNA-Articular-Surface': {
+        'path': os.path.join(DATA_ROOT, 'TSRS_RSNA-Articular-Surface'),
+        'structure': 'TSRS_RSNA', 'num_classes': 2, 'size': (428, 428)
+    },
     'JSRT': {
         'path': os.path.join(DATA_ROOT, 'jsrt'),
         'structure': 'FLAT_SPLIT', 'num_classes': 2, 'size': (428, 428)
