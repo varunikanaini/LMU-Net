@@ -9,6 +9,46 @@ from scipy.ndimage import map_coordinates
 from scipy.ndimage import gaussian_filter
 import cv2
 
+class RandomRotation(object):
+    """
+    Rotates the image and its mask by a random angle.
+    """
+    def __init__(self, degrees):
+        """
+        Args:
+            degrees (int or float): Range of degrees to select from.
+                If degrees is a number, the range will be (-degrees, +degrees).
+        """
+        self.degrees = (-degrees, degrees)
+
+    def __call__(self, sample):
+        img = sample['image']
+        mask = sample['label']
+
+        angle = random.uniform(self.degrees[0], self.degrees[1])
+
+        rotated_img = img.rotate(angle, resample=Image.BILINEAR, expand=False)
+        rotated_mask = mask.rotate(angle, resample=Image.NEAREST, expand=False)
+
+        return {'image': rotated_img,
+                'label': rotated_mask}
+
+class Resize(object):
+    def __init__(self, size):
+        # size is expected as a tuple (W, H)
+        assert isinstance(size, tuple)
+        self.size = size
+
+    def __call__(self, sample):
+        img = sample['image']
+        mask = sample['label']
+        
+        # PIL's resize takes (width, height)
+        img = img.resize(self.size, Image.BILINEAR)
+        mask = mask.resize(self.size, Image.NEAREST)
+
+        return {'image': img, 'label': mask}
+    
 class RandomResizedCrop(object):
     def __init__(self, size, scale=(0.8, 1.0), ratio=(3./4., 4./3.)):
         self.transform = transforms.RandomResizedCrop(size, scale, ratio, interpolation=transforms.InterpolationMode.LANCZOS)

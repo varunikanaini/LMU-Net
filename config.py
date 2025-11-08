@@ -11,64 +11,59 @@ FOCAL_GAMMA = 2.0
 os.makedirs(DATA_ROOT, exist_ok=True)
 os.makedirs(CKPT_ROOT, exist_ok=True)
 
-# --- Dataset Configurations ---
+GRAYSCALE_DATASETS = [
+    'TSRS_RSNA-Epiphysis',
+    'TSRS_RSNA-Articular-Surface',
+    'JSRT',
+    'COVID19_Radiography',
+    'DentalPanoramic',
+    'SixDiseasesChestXRay',
+    'MontgomeryCounty'
+]
+
+COLOR_DATASETS = [
+    'CVC-ClinicDB',
+    'CVC-ColonDB',
+    'ETIS-LaribPolypDB',
+    'Kvasir-SEG'
+]
+
 DATASET_CONFIG = {
     'TSRS_RSNA-Epiphysis': {
         'path': os.path.join(DATA_ROOT, 'TSRS_RSNA-Epiphysis'),
-        'structure': 'TSRS_RSNA',
-        'num_classes': 2,
-    },
-    'TSRS_RSNA-Articular-Surface': {
-        'path': os.path.join(DATA_ROOT, 'TSRS_RSNA-Articular-Surface'),
-        'structure': 'TSRS_RSNA',
-        'num_classes': 2,
+        'structure': 'TSRS_RSNA', 'num_classes': 2, 'size': (428, 428)
     },
     'JSRT': {
         'path': os.path.join(DATA_ROOT, 'jsrt'),
-        'structure': 'FLAT_SPLIT',
-        'num_classes': 2,
+        'structure': 'FLAT_SPLIT', 'num_classes': 2, 'size': (428, 428)
+    },
+    'MontgomeryCounty': {
+        'path': os.path.join(DATA_ROOT, 'MontgomerySet'),
+        'structure': 'MONTGOMERY', 'num_classes': 2, 'size': (428, 428)
     },
     'COVID19_Radiography': {
         'path': os.path.join(DATA_ROOT, 'covid19-radiography-database'),
-        'structure': 'FLAT_SPLIT',
-        'num_classes': 4,
+        'structure': 'FLAT_SPLIT', 'num_classes': 4, 'size': (428, 428)
     },
+
     'CVC-ClinicDB': {
         'path': os.path.join(DATA_ROOT, 'CVC-ClinicDB'),
-        'structure': 'FLAT_SPLIT',
-        'num_classes': 2,
-    },
-    'DentalPanoramic': {
-        'path': os.path.join(DATA_ROOT, 'dental_panoramic_xrays'),
-        'structure': 'FLAT_SPLIT',
-        'num_classes': 2,
-    },
-    'SixDiseasesChestXRay': {
-        'path': os.path.join(DATA_ROOT, 'Dataset'),
-        'structure': 'FLAT_SPLIT',
-        'num_classes': 6,
-    },
-    # Your updated and correct path for Montgomery
-    'MontgomeryCounty': {
-        'path': os.path.join(DATA_ROOT, 'MontgomerySet'),
-        'structure': 'MONTGOMERY',
-        'num_classes': 2,
+        'structure': 'FLAT_SPLIT', 'num_classes': 2, 'size': (288, 384) 
     },
     'CVC-ColonDB': {
-        'path': os.path.join(DATA_ROOT, 'CVC-ColonDB'), # Assuming this folder name
-        'structure': 'FLAT_SPLIT', 'num_classes': 2,
+        'path': os.path.join(DATA_ROOT, 'CVC-ColonDB'),
+        'structure': 'FLAT_SPLIT', 'num_classes': 2, 'size': (288, 384)
     },
     'ETIS-LaribPolypDB': {
         'path': os.path.join(DATA_ROOT, 'etis-laribpolypdb'),
-        'structure': 'FLAT_SPLIT', 'num_classes': 2,
+        'structure': 'FLAT_SPLIT', 'num_classes': 2, 'size': (288, 384)
     },
     'Kvasir-SEG': {
-        'path': os.path.join(DATA_ROOT, 'Kvasir-SEG'), # Assuming this folder name
-        'structure': 'FLAT_SPLIT', 'num_classes': 2,
+        'path': os.path.join(DATA_ROOT, 'Kvasir-SEG'),
+        'structure': 'FLAT_SPLIT', 'num_classes': 2, 'size': (288, 384)
     },
 }
 
-# --- (Rest of file is unchanged) ---
 BACKBONE_INPUT_RESOLUTIONS = {
     'vgg16': (224, 224),
     'resnet50': (224, 224),

@@ -22,24 +22,20 @@ def make_dataset(root, dataset_name, split='train', val_size=0.15, test_size=0.1
     all_pairs = []
 
     if structure == 'TSRS_RSNA':
-        # ... (this part is unchanged)
-        split_root = os.path.join(root, split)
-        if not os.path.exists(split_root):
-            print(f"Warning: Directory not found for pre-split dataset: {split_root}")
-            return []
-        mask_dir = os.path.join(split_root + '_labels')
-        if not os.path.exists(mask_dir):
-            print(f"Warning: Mask directory not found: {mask_dir}")
-            return []
-        img_names = [os.path.splitext(f)[0] for f in os.listdir(split_root) if f.lower().endswith(IMAGE_EXTENSIONS)]
-        for name in img_names:
-            img_path = os.path.join(split_root, name + '.jpg')
-            mask_path = os.path.join(mask_dir, name + '.png')
-            if os.path.exists(img_path) and os.path.exists(mask_path):
-                all_pairs.append((img_path, mask_path))
+        splits_to_check = ['train', 'test'] if split == 'all' else [split]
+        for s in splits_to_check:
+            split_root = os.path.join(root, s)
+            if not os.path.exists(split_root): continue
+            mask_dir = os.path.join(split_root + '_labels')
+            if not os.path.exists(mask_dir): continue
+            img_names = [os.path.splitext(f)[0] for f in os.listdir(split_root) if f.lower().endswith(IMAGE_EXTENSIONS)]
+            for name in img_names:
+                img_path = os.path.join(split_root, name + '.jpg')
+                mask_path = os.path.join(mask_dir, name + '.png')
+                if os.path.exists(img_path) and os.path.exists(mask_path):
+                    all_pairs.append((img_path, mask_path))
         return all_pairs
 
-    # --- NEW LOGIC FOR MONTGOMERY COUNTY DATASET ---
     elif structure == 'MONTGOMERY':
         image_dir = os.path.join(root, 'CXR_png')
         left_mask_dir = os.path.join(root, 'ManualMask', 'leftMask')
@@ -47,15 +43,13 @@ def make_dataset(root, dataset_name, split='train', val_size=0.15, test_size=0.1
         if not all(os.path.exists(d) for d in [image_dir, left_mask_dir, right_mask_dir]): return []
         for img_file in os.listdir(image_dir):
             if img_file.lower().endswith('.png'):
-                base_name = os.path.splitext(img_file)[0]
                 img_path = os.path.join(image_dir, img_file)
-                left_mask_path = os.path.join(left_mask_dir, base_name + '.png') # Note: official masks don't have '_mask'
-                right_mask_path = os.path.join(right_mask_dir, base_name + '.png')
+                left_mask_path = os.path.join(left_mask_dir, img_file)
+                right_mask_path = os.path.join(right_mask_dir, img_file)
                 if os.path.exists(left_mask_path) and os.path.exists(right_mask_path):
                     all_pairs.append((img_path, left_mask_path, right_mask_path))
 
     elif structure == 'FLAT_SPLIT':
-        # ... (this part is unchanged)
         if dataset_name == 'JSRT':
             image_dir = os.path.join(root, 'cxr')
             mask_dir = os.path.join(root, 'masks')
@@ -97,7 +91,6 @@ def make_dataset(root, dataset_name, split='train', val_size=0.15, test_size=0.1
             image_dir = os.path.join(root, 'images')
             mask_dir = os.path.join(root, 'masks')
             if os.path.exists(image_dir) and os.path.exists(mask_dir):
-                # These datasets use .png for both images and masks
                 for file_name in os.listdir(image_dir):
                     if file_name.lower().endswith('.png'):
                         img_path = os.path.join(image_dir, file_name)
@@ -105,12 +98,10 @@ def make_dataset(root, dataset_name, split='train', val_size=0.15, test_size=0.1
                         if os.path.exists(mask_path):
                             all_pairs.append((img_path, mask_path))
 
-        # --- NEW LOGIC FOR Kvasir-SEG ---
         elif dataset_name == 'Kvasir-SEG':
             image_dir = os.path.join(root, 'images')
             mask_dir = os.path.join(root, 'masks')
             if os.path.exists(image_dir) and os.path.exists(mask_dir):
-                # This dataset uses .jpg for both images and masks
                 for file_name in os.listdir(image_dir):
                     if file_name.lower().endswith('.jpg'):
                         img_path = os.path.join(image_dir, file_name)
@@ -122,7 +113,6 @@ def make_dataset(root, dataset_name, split='train', val_size=0.15, test_size=0.1
         print(f"Warning: Found 0 image-mask pairs for '{dataset_name}' at root '{root}'.")
         return []
 
-    # Splitting logic is now universal for FLAT_SPLIT and MONTGOMERY
     train_val_pairs, test_pairs = train_test_split(all_pairs, test_size=test_size, random_state=random_state)
     val_proportion = val_size / (1 - test_size)
     train_pairs, val_pairs = train_test_split(train_val_pairs, test_size=val_proportion, random_state=random_state)
@@ -150,70 +140,83 @@ class ImageFolder(data.Dataset):
                  print(f"Warning: No images found for dataset '{self.dataset_name}', split '{self.split}' at root '{self.root}'.")
             self.imgs = []
 
-        self.mean = (0.485, 0.456, 0.406)
-        self.std = (0.229, 0.224, 0.225)
+        if self.dataset_name in config.COLOR_DATASETS:
+            dataset_cfg = config.DATASET_CONFIG[self.dataset_name]
+            image_size = dataset_cfg.get('size', (args.scale_w, args.scale_h)) # Get specific size (W, H)
 
-        # Montgomery is also grayscale
-        if dataset_name in ['JSRT', 'COVID19_Radiography', 'MontgomeryCounty']:
-            self.mean = [0.5]
-            self.std = [0.5]
-
-        if self.split == 'train':
-            self.composed_transforms = transforms.Compose([
-                tr.RandomResizedCrop(size=(args.scale_h, args.scale_w), scale=(0.8, 1.0), ratio=(0.9, 1.1)),
-                tr.RandomHorizontalFlip(),
-                tr.ElasticTransform(alpha=35, sigma=5, p=0.4),
-                tr.GridDistortion(num_steps=5, distort_limit=0.2, p=0.4),
-                tr.RandomGaussianBlur(),
-                tr.ColorJitter(brightness=0.2, contrast=0.2),
-                tr.RandomAffine(degrees=7, translate=(0.05, 0.05), shear=5),
-                tr.Normalize(mean=self.mean, std=self.std),
-                tr.ToTensor()
-            ])
+            self.mean = (0.485, 0.456, 0.406) # Standard ImageNet mean/std for color
+            self.std = (0.229, 0.224, 0.225)
+            
+            if self.split == 'train':
+                self.composed_transforms = transforms.Compose([
+                    tr.RandomResizedCrop(size=image_size, scale=(0.8, 1.0)), 
+                    tr.RandomRotation(degrees=15),
+                    tr.RandomHorizontalFlip(),
+                    tr.RandomGaussianBlur(p=0.5),
+                    tr.Normalize(mean=self.mean, std=self.std),
+                    tr.ToTensor()
+                ])
+            else: # Validation/Test
+                self.composed_transforms = transforms.Compose([
+                    tr.Resize(image_size),
+                    tr.Normalize(mean=self.mean, std=self.std),
+                    tr.ToTensor()
+                ])
         else:
-            self.composed_transforms = transforms.Compose([
-                tr.ProportionalResizePad(output_size=args.scale_h),
-                tr.Normalize(mean=self.mean, std=self.std),
-                tr.ToTensor()
-            ])
+            self.mean = (0.485, 0.456, 0.406)
+            self.std = (0.229, 0.224, 0.225)
+
+            if dataset_name in ['JSRT', 'COVID19_Radiography', 'MontgomeryCounty']:
+                self.mean = [0.5]
+                self.std = [0.5]
+
+            if self.split == 'train':
+                self.composed_transforms = transforms.Compose([
+                    tr.RandomResizedCrop(size=(args.scale_h, args.scale_w), scale=(0.8, 1.0), ratio=(0.9, 1.1)),
+                    tr.RandomHorizontalFlip(),
+                    tr.ElasticTransform(alpha=35, sigma=5, p=0.4),
+                    tr.GridDistortion(num_steps=5, distort_limit=0.2, p=0.4),
+                    tr.RandomGaussianBlur(),
+                    tr.ColorJitter(brightness=0.2, contrast=0.2),
+                    tr.RandomAffine(degrees=7, translate=(0.05, 0.05), shear=5),
+                    tr.Normalize(mean=self.mean, std=self.std),
+                    tr.ToTensor()
+                ])
+            else:
+                self.composed_transforms = transforms.Compose([
+                    tr.ProportionalResizePad(output_size=args.scale_h),
+                    tr.Normalize(mean=self.mean, std=self.std),
+                    tr.ToTensor()
+                ])
 
     def __getitem__(self, index):
         try:
-            # --- NEW LOGIC TO HANDLE DIFFERENT DATASET STRUCTURES ---
+            # --- UPDATED: Smarter image loading ---
             if self.dataset_name == 'MontgomeryCounty':
                 img_path, left_gt_path, right_gt_path = self.imgs[index]
-                
-                # Load and combine masks
                 left_mask_cv = cv2.imread(left_gt_path, cv2.IMREAD_GRAYSCALE)
                 right_mask_cv = cv2.imread(right_gt_path, cv2.IMREAD_GRAYSCALE)
-                
-                if left_mask_cv is None or right_mask_cv is None:
-                    raise FileNotFoundError(f"Could not read one or both masks for {img_path}")
-                
-                # Combine the two masks into one using a bitwise OR operation
+                if left_mask_cv is None or right_mask_cv is None: raise FileNotFoundError(f"Could not read one/both masks for {img_path}")
                 mask_cv = cv2.bitwise_or(left_mask_cv, right_mask_cv)
-                
-            else: # For all other datasets
+            else: 
                 img_path, gt_path = self.imgs[index]
                 mask_cv = cv2.imread(gt_path, cv2.IMREAD_GRAYSCALE)
-                if mask_cv is None:
-                    raise FileNotFoundError(f"OpenCV could not read mask: {gt_path}.")
-            # --------------------------------------------------------
+                if mask_cv is None: raise FileNotFoundError(f"OpenCV could not read mask: {gt_path}.")
 
             img_cv = cv2.imread(img_path)
-            if img_cv is None:
-                raise FileNotFoundError(f"OpenCV could not read image: {img_path}.")
+            if img_cv is None: raise FileNotFoundError(f"OpenCV could not read image: {img_path}.")
 
-            if img_cv.ndim == 3 and img_cv.shape[2] == 3:
+            # Convert to RGB for color datasets, Grayscale for others based on mean
+            if len(self.mean) == 3: # This is a color dataset
                 img_cv = cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)
-            elif img_cv.ndim == 2:
-                img_cv = cv2.cvtColor(img_cv, cv2.COLOR_GRAY2RGB)
+            else: # This is a grayscale dataset
+                if img_cv.ndim == 3: img_cv = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
 
             img = Image.fromarray(img_cv)
             target = Image.fromarray(mask_cv, mode='L')
             label = self.convert_label(target)
 
-        except (UnidentifiedImageError, FileNotFoundError, cv2.error, ValueError, Exception) as e:
+        except Exception as e:
             print(f"ERROR: Could not process sample at index {index}. Error: {e}. Skipping.")
             return None
 
@@ -227,12 +230,9 @@ class ImageFolder(data.Dataset):
 
     def convert_label(self, label):
         label_np = np.array(label, dtype=np.uint8)
-        if label_np.ndim == 3 and label_np.shape[2] == 1:
-            label_np = label_np.squeeze(2)
-
+        if label_np.ndim == 3: label_np = label_np[..., 0]
         label_index = np.zeros_like(label_np, dtype=np.uint8)
         label_index[label_np > 0] = 1
-
         return Image.fromarray(label_index, mode='P')
 
     def __len__(self):
