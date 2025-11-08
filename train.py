@@ -95,8 +95,8 @@ def get_args():
     args.dataset_path, args.num_classes = dataset_info['path'], dataset_info['num_classes']
     if args.scale_h is None or args.scale_w is None:
         res_h, res_w = config.get_backbone_resolution(args.backbone)
-        if args.scale_h is None: args.scale_h = res_h
-        if args.scale_w is None: args.scale_w = res_w
+        if args.scale_h is None: args.scale_h = args.scale_h
+        if args.scale_w is None: args.scale_w = args.scale_w
     for k, v in config.DEFAULT_ARGS.items():
         if not hasattr(args, k): setattr(args, k, v)
     return args
