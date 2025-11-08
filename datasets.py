@@ -141,25 +141,24 @@ class ImageFolder(data.Dataset):
             self.imgs = []
 
         if self.dataset_name in config.COLOR_DATASETS:
-            # --- Pipeline for COLOR Colonoscopy Images (Inspired by MEGANet) ---
+            # --- NEW SOTA Pipeline for COLOR Colonoscopy Images ---
             dataset_cfg = config.DATASET_CONFIG[self.dataset_name]
-            image_size = dataset_cfg.get('size', (args.scale_w, args.scale_h))
+            image_size = dataset_cfg.get('size', (args.scale_h, args.scale_w)) # Should be (384, 384)
 
             self.mean = (0.485, 0.456, 0.406)
             self.std = (0.229, 0.224, 0.225)
             
             if self.split == 'train':
-                # Simpler, geometric-focused augmentations
                 self.composed_transforms = transforms.Compose([
-                    tr.Resize(image_size),
+                    tr.RandomResizedCrop(size=image_size, scale=(0.7, 1.0), ratio=(0.75, 1.33)),
                     tr.RandomHorizontalFlip(),
-                    tr.RandomVerticalFlip(), # As seen in MEGANet
-                    tr.RandomRotation(90), # A safe rotation range
+                    tr.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
                     tr.Normalize(mean=self.mean, std=self.std),
                     tr.ToTensor()
                 ])
             else: # Validation/Test
                 self.composed_transforms = transforms.Compose([
+                    # For validation, resize to the target size to be consistent
                     tr.Resize(image_size),
                     tr.Normalize(mean=self.mean, std=self.std),
                     tr.ToTensor()

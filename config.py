@@ -48,19 +48,19 @@ DATASET_CONFIG = {
 
     'CVC-ClinicDB': {
         'path': os.path.join(DATA_ROOT, 'CVC-ClinicDB'),
-        'structure': 'FLAT_SPLIT', 'num_classes': 2, 'size': (288, 384) 
+        'structure': 'FLAT_SPLIT', 'num_classes': 2, 'size': (384, 384)
     },
     'CVC-ColonDB': {
         'path': os.path.join(DATA_ROOT, 'CVC-ColonDB'),
-        'structure': 'FLAT_SPLIT', 'num_classes': 2, 'size': (288, 384)
+        'structure': 'FLAT_SPLIT', 'num_classes': 2, 'size': (384, 384)
     },
     'ETIS-LaribPolypDB': {
         'path': os.path.join(DATA_ROOT, 'etis-laribpolypdb'),
-        'structure': 'FLAT_SPLIT', 'num_classes': 2, 'size': (288, 384)
+        'structure': 'FLAT_SPLIT', 'num_classes': 2, 'size': (384, 384)
     },
     'Kvasir-SEG': {
         'path': os.path.join(DATA_ROOT, 'Kvasir-SEG'),
-        'structure': 'FLAT_SPLIT', 'num_classes': 2, 'size': (288, 384)
+        'structure': 'FLAT_SPLIT', 'num_classes': 2, 'size': (384, 384)
     },
 }
 
