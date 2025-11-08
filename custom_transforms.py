@@ -9,29 +9,44 @@ from scipy.ndimage import map_coordinates
 from scipy.ndimage import gaussian_filter
 import cv2
 
-class RandomRotation(object):
-    """
-    Rotates the image and its mask by a random angle.
-    """
-    def __init__(self, degrees):
-        """
-        Args:
-            degrees (int or float): Range of degrees to select from.
-                If degrees is a number, the range will be (-degrees, +degrees).
-        """
-        self.degrees = (-degrees, degrees)
+
+class RandomHorizontalFlip(object):
+    def __init__(self, p=0.5):
+        self.p = p
 
     def __call__(self, sample):
         img = sample['image']
         mask = sample['label']
+        if random.random() < self.p:
+            img = img.transpose(Image.FLIP_LEFT_RIGHT)
+            mask = mask.transpose(Image.FLIP_LEFT_RIGHT)
+        return {'image': img, 'label': mask}
 
+class RandomVerticalFlip(object):
+    def __init__(self, p=0.5):
+        self.p = p
+
+    def __call__(self, sample):
+        img = sample['image']
+        mask = sample['label']
+        if random.random() < self.p:
+            img = img.transpose(Image.FLIP_TOP_BOTTOM)
+            mask = mask.transpose(Image.FLIP_TOP_BOTTOM)
+        return {'image': img, 'label': mask}
+
+class RandomRotation(object):
+    def __init__(self, degrees):
+        if isinstance(degrees, numbers.Number):
+            self.degrees = (-degrees, degrees)
+        else:
+            self.degrees = degrees
+
+    def __call__(self, sample):
+        img = sample['image']
+        mask = sample['label']
         angle = random.uniform(self.degrees[0], self.degrees[1])
-
-        rotated_img = img.rotate(angle, resample=Image.BILINEAR, expand=False)
-        rotated_mask = mask.rotate(angle, resample=Image.NEAREST, expand=False)
-
-        return {'image': rotated_img,
-                'label': rotated_mask}
+        return {'image': img.rotate(angle, Image.BILINEAR),
+                'label': mask.rotate(angle, Image.NEAREST)}
 
 class Resize(object):
     def __init__(self, size):

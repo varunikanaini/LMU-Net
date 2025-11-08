@@ -141,18 +141,20 @@ class ImageFolder(data.Dataset):
             self.imgs = []
 
         if self.dataset_name in config.COLOR_DATASETS:
+            # --- Pipeline for COLOR Colonoscopy Images (Inspired by MEGANet) ---
             dataset_cfg = config.DATASET_CONFIG[self.dataset_name]
-            image_size = dataset_cfg.get('size', (args.scale_w, args.scale_h)) # Get specific size (W, H)
+            image_size = dataset_cfg.get('size', (args.scale_w, args.scale_h))
 
-            self.mean = (0.485, 0.456, 0.406) # Standard ImageNet mean/std for color
+            self.mean = (0.485, 0.456, 0.406)
             self.std = (0.229, 0.224, 0.225)
             
             if self.split == 'train':
+                # Simpler, geometric-focused augmentations
                 self.composed_transforms = transforms.Compose([
-                    tr.RandomResizedCrop(size=image_size, scale=(0.8, 1.0)), 
-                    tr.RandomRotation(degrees=15),
+                    tr.Resize(image_size),
                     tr.RandomHorizontalFlip(),
-                    tr.RandomGaussianBlur(),
+                    tr.RandomVerticalFlip(), # As seen in MEGANet
+                    tr.RandomRotation(90), # A safe rotation range
                     tr.Normalize(mean=self.mean, std=self.std),
                     tr.ToTensor()
                 ])
