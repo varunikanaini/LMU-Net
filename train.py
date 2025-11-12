@@ -64,11 +64,6 @@ def calculate_acd(pred_mask, gt_mask):
     dist_pred_to_gt = np.mean(np.min(dist_matrix, axis=1))
     dist_gt_to_pred = np.mean(np.min(dist_matrix, axis=0))
     return (dist_pred_to_gt + dist_gt_to_pred) / 2.0
-
-def calculate_mae(pred_mask, gt_mask):
-    """Calculates the Mean Absolute Error between two binary masks."""
-    return np.mean(np.abs(pred_mask.astype(np.float32) - gt_mask.astype(np.float32)))
-
 def get_args():
     parser = argparse.ArgumentParser(description='Train Segmentation Models')
     parser.add_argument('--dataset-name', type=str, required=True, choices=list(config.DATASET_CONFIG.keys()))
@@ -131,118 +126,65 @@ def evaluate_model(net, data_loader, device, focal_loss_fn, dice_loss_fn, args, 
     logging.info(f"--- {mode} Summary --- Loss: {loss_recorder.avg:.4f}, OA: {acc_global.item():.4f}, mIoU: {miou:.4f}, FW-IoU: {FWIoU.item():.4f}, Dice: {mDice:.4f}")
     if mode.startswith("Validating"): net.train()
     return acc_global.item(), miou, FWIoU.item(), mDice
-
-# --- REPLACE your existing test(args) function with this one ---
-
 def test(args):
     device = torch.device("cuda")
     exp_name = f"{args.backbone}_FreezeTune_LASA_{args.dataset_name.replace('TSRS_RSNA-', '').lower()}"
     base_exp_path = os.path.join(config.CKPT_ROOT, exp_name)
-    setup_logging(base_exp_path, 'main_testing_log.log') # Use a different log file
+    setup_logging(base_exp_path, 'main_testing_log.log')
     logging.info("\n" + "="*50 + f"\nSTARTING COMPREHENSIVE EVALUATION on '{args.dataset_name}'\n" + "="*50)
-
-    # --- Data Loader ---
     test_ds = ImageFolder(root=args.dataset_path, dataset_name=args.dataset_name, args=args, split='test')
     if len(test_ds) == 0:
-        logging.error(f"No images found for the 'test' split. Exiting.")
-        return
+        logging.error("No images found for the 'test' split. Exiting."); return
     test_loader = DataLoader(test_ds, batch_size=1, shuffle=False, num_workers=args.num_workers, collate_fn=custom_collate_fn)
-
-    # --- Model ---
     net = Light_LASA_Unet(num_classes=args.num_classes, backbone_name=args.backbone, lasa_kernels=args.lasa_kernels).to(device)
     logging.info(f"Instantiated Light_LASA_Unet with backbone: {args.backbone}")
-
-    # --- Metrics Storage (Expanded) ---
-    all_fold_metrics = {
-        'oa': [], 'miou': [], 'fwiou': [], 'dice_per_image': [], 'mean_dice_global': [], 
-        'mae': [], 'acd': [], 'sensitivity': [], 'specificity': [], 'precision': [], 'f1_score': []
-    }
+    all_fold_metrics = {'oa':[], 'miou':[], 'dice':[], 'fwiou':[], 'acd':[], 'sensitivity':[], 'specificity':[], 'precision':[]}
     num_folds_to_test = args.k_folds if args.k_folds > 1 else 1
-
     for fold_idx in range(num_folds_to_test):
         logging.info(f"\n--- Evaluating Fold {fold_idx} ---")
         ckpt_path = os.path.join(base_exp_path, f"fold_{fold_idx}", 'best_checkpoint.pth')
-
         if not os.path.exists(ckpt_path):
-            logging.warning(f"Checkpoint for fold {fold_idx} not found at {ckpt_path}. SKIPPING.")
-            continue
-
+            logging.warning(f"Checkpoint for fold {fold_idx} not found. SKIPPING."); continue
         net.load_state_dict(torch.load(ckpt_path, map_location=device))
         net.eval()
-
-        # --- Evaluation Loop for the current fold ---
         conf_matrix = ConfusionMatrix(args.num_classes)
         acd_scores = []
-        mae_scores = [] # New list for MAE
         with torch.no_grad():
             for sample in tqdm(test_loader, desc=f"Testing Fold {fold_idx}"):
                 if sample is None: continue
-                
-                image = sample['image'].to(device)
-                gt_label_np = sample['label'].squeeze(0).numpy()
-                
+                image, gt_label_np = sample['image'].to(device), sample['label'].squeeze(0).numpy()
                 outputs = net(image)
                 pred_np = outputs[-1].argmax(1).squeeze(0).cpu().numpy()
-
                 conf_matrix.update(torch.from_numpy(gt_label_np).flatten(), torch.from_numpy(pred_np).flatten())
-                
-                # Calculate new per-image metrics
-                mae_scores.append(calculate_mae(pred_np, gt_label_np))
                 acd = calculate_acd(pred_np, gt_label_np)
-                if not np.isnan(acd):
-                    acd_scores.append(acd)
-        
-        # --- Compute all metrics for the current fold ---
-        # Get metrics from your existing seg_utils.py
-        acc_global, acc, iu, FWIoU, dice_per_image_avg = conf_matrix.compute()
+                if not np.isnan(acd): acd_scores.append(acd)
+        acc_global, acc, iu, FWIoU, mDice = conf_matrix.compute()
         miou = iu.mean().item()
-        
-        # Calculate other metrics from the total confusion matrix
         h = conf_matrix.mat.float()
         eps = 1e-6
         tn, fp, fn, tp = h[0, 0], h[0, 1], h[1, 0], h[1, 1]
-
         sensitivity = (tp / (tp + fn + eps)).item()
         specificity = (tn / (tn + fp + eps)).item()
         precision = (tp / (tp + fp + eps)).item()
-        recall = sensitivity # Sensitivity and Recall are the same
-        f1_score = (2 * precision * recall) / (precision + recall + eps)
-        
-        # This is the "Mean Dice" from the papers (calculated from totals)
-        mean_dice_global = ((2 * tp) / (2 * tp + fp + fn + eps)).item()
-        
-        mean_acd = np.mean(acd_scores) if acd_scores else 0.0
-        mean_mae = np.mean(mae_scores) if mae_scores else 0.0 # Calculate mean MAE
-        
-        logging.info(f"Fold {fold_idx} Results -> OA: {acc_global:.4f}, mIoU: {miou:.4f}, Mean Dice (Global): {mean_dice_global:.4f}, MAE: {mean_mae:.4f}, "
-                     f"F1: {f1_score:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}")
-
-        # Store all metrics
+        mean_acd_score = np.mean(acd_scores) if acd_scores else 0.0
+        logging.info(f"Fold {fold_idx} Results -> OA: {acc_global:.4f}, mIoU: {miou:.4f}, Dice: {mDice:.4f}, FW-IoU: {FWIoU:.4f}, "
+                     f"ACD: {mean_acd_score:.4f}, Sensitivity: {sensitivity:.4f}, Specificity: {specificity:.4f}, Precision: {precision:.4f}")
         all_fold_metrics['oa'].append(acc_global.item())
         all_fold_metrics['miou'].append(miou)
+        all_fold_metrics['dice'].append(mDice)
         all_fold_metrics['fwiou'].append(FWIoU.item())
-        all_fold_metrics['dice_per_image'].append(dice_per_image_avg)
-        all_fold_metrics['mean_dice_global'].append(mean_dice_global)
-        all_fold_metrics['mae'].append(mean_mae)
-        all_fold_metrics['acd'].append(mean_acd)
+        all_fold_metrics['acd'].append(mean_acd_score)
         all_fold_metrics['sensitivity'].append(sensitivity)
         all_fold_metrics['specificity'].append(specificity)
         all_fold_metrics['precision'].append(precision)
-        all_fold_metrics['f1_score'].append(f1_score)
-
-    # --- Final Summary ---
     logging.info("\n" + "="*50 + "\nFINAL COMPREHENSIVE EVALUATION SUMMARY\n" + "="*50)
     if not all_fold_metrics['miou']:
-        logging.error("No models were tested. Cannot compute final metrics.")
-        return
-
+        logging.error("No models were tested."); return
     logging.info(f"Metrics averaged over {len(all_fold_metrics['miou'])} tested fold(s).")
     for key, values in all_fold_metrics.items():
         mean = np.mean(values)
         std = np.std(values)
-        # Use a more readable key in the final printout
-        key_name = key.replace('_', ' ').capitalize()
-        logging.info(f"Average {key_name:<20}: {mean:.4f} ± {std:.4f}")
+        logging.info(f"Average {key.capitalize():<12}: {mean:.4f} ± {std:.4f}")
     logging.info("="*50)
 
 
