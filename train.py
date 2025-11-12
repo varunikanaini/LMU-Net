@@ -147,10 +147,10 @@ def test(args):
     net = Light_LASA_Unet(num_classes=args.num_classes, backbone_name=args.backbone, lasa_kernels=args.lasa_kernels).to(device)
     logging.info(f"Instantiated Light_LASA_Unet with backbone: {args.backbone}")
 
-    # Expanded metrics storage
+    # Expanded metrics storage to include F1, Precision, and Recall
     all_fold_metrics = {
-        'oa': [], 'miou': [], 'fwiou': [], 'dice_per_image': [], 'mean_dice_global': [], 
-        'mae': [], 'acd': [], 'sensitivity': [], 'specificity': [], 'precision': []
+        'oa':[], 'miou':[], 'fwiou':[], 'dice_per_image':[], 'mean_dice_global':[], 'mae':[], 'acd':[],
+        'sensitivity':[], 'specificity':[], 'precision':[], 'f1_score':[]
     }
     num_folds_to_test = args.k_folds if args.k_folds > 1 else 1
 
@@ -179,28 +179,29 @@ def test(args):
                 if not np.isnan(acd): acd_scores.append(acd)
         
         # --- Calculate all metrics ---
-        # Get metrics from your existing seg_utils
-        acc_global, acc, iu, FWIoU, dice_per_image_avg = conf_matrix.compute()
+        acc_global, acc, iu, FWIou, dice_per_image_avg = conf_matrix.compute()
         miou = iu.mean().item()
         
-        # Calculate other metrics from the total confusion matrix
         h = conf_matrix.mat.float()
         eps = 1e-6
         tn, fp, fn, tp = h[0, 0], h[0, 1], h[1, 0], h[1, 1]
 
-        sensitivity = (tp / (tp + fn + eps)).item()
+        # Standard metrics
+        sensitivity = (tp / (tp + fn + eps)).item() # This is the same as Recall
         specificity = (tn / (tn + fp + eps)).item()
+        
+        # --- NEW: Paper-specific metrics ---
         precision = (tp / (tp + fp + eps)).item()
+        recall = sensitivity # Recall and Sensitivity are the same thing
+        f1_score = (2 * precision * recall) / (precision + recall + eps)
+        # ---------------------------------
         
-        # This is the "Mean Dice" from the papers (calculated from totals)
         mean_dice_global = ((2 * tp) / (2 * tp + fp + fn + eps)).item()
-        
         mean_acd = np.mean(acd_scores) if acd_scores else 0.0
         mean_mae = np.mean(mae_scores) if mae_scores else 0.0
         
-        logging.info(f"Fold {fold_idx} Results -> OA: {acc_global:.4f}, mIoU: {miou:.4f}, Dice (per-image): {dice_per_image_avg:.4f}, "
-                     f"Mean Dice (global): {mean_dice_global:.4f}, MAE: {mean_mae:.4f}, ACD: {mean_acd:.4f}, Sensitivity: {sensitivity:.4f}, "
-                     f"Specificity: {specificity:.4f}, Precision: {precision:.4f}")
+        logging.info(f"Fold {fold_idx} Results -> OA: {acc_global:.4f}, mIoU: {miou:.4f}, Mean Dice: {mean_dice_global:.4f}, MAE: {mean_mae:.4f}, "
+                     f"F1-Score: {f1_score:.4f}, Precision: {precision:.4f}, Recall (Sensitivity): {recall:.4f}, Specificity: {specificity:.4f}")
 
         all_fold_metrics['oa'].append(acc_global.item())
         all_fold_metrics['miou'].append(miou)
@@ -212,6 +213,7 @@ def test(args):
         all_fold_metrics['sensitivity'].append(sensitivity)
         all_fold_metrics['specificity'].append(specificity)
         all_fold_metrics['precision'].append(precision)
+        all_fold_metrics['f1_score'].append(f1_score)
 
     logging.info("\n" + "="*50 + "\nFINAL COMPREHENSIVE EVALUATION SUMMARY\n" + "="*50)
     if not all_fold_metrics['miou']:
