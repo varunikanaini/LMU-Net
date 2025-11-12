@@ -205,7 +205,7 @@ def test(args):
 
         all_fold_metrics['oa'].append(acc_global.item())
         all_fold_metrics['miou'].append(miou)
-        all_fold_metrics['fwiou'].append(FWIoU.item())
+        all_fold_metrics['fwiou'].append(FWIou.item())
         all_fold_metrics['dice_per_image'].append(dice_per_image_avg)
         all_fold_metrics['mean_dice_global'].append(mean_dice_global)
         all_fold_metrics['mae'].append(mean_mae)
