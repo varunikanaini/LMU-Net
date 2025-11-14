@@ -58,7 +58,7 @@ def get_args():
 
 def visualize_and_save(model, loader, device, args, color_map):
     model.eval()
-    output_dir = os.path.join(config.CKPT_ROOT, args.exp_name, f"fold_{args.fold}", "visualizations")
+    output_dir = os.path.join(config.CKPT_ROOT, args.exp_name, f"fold_{args.fold}", "visualizations_new")
     check_mkdir(output_dir)
     print(f"Saving visualizations to: {output_dir}")
     mean = [0.485, 0.456, 0.406]
