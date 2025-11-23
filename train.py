@@ -20,7 +20,7 @@ from datasets import ImageFolder, make_dataset
 from seg_utils import ConfusionMatrix
 from misc import AvgMeter, check_mkdir
 
-# ... (All functions before train_fold are unchanged) ...
+# ... (All functions before get_args are unchanged) ...
 class FocalLoss(nn.Module):
     def __init__(self, alpha=0.5, gamma=2): super(FocalLoss, self).__init__(); self.alpha, self.gamma = alpha, gamma
     def forward(self, i, t):
@@ -64,6 +64,7 @@ def calculate_acd(pred_mask, gt_mask):
     dist_pred_to_gt = np.mean(np.min(dist_matrix, axis=1))
     dist_gt_to_pred = np.mean(np.min(dist_matrix, axis=0))
     return (dist_pred_to_gt + dist_gt_to_pred) / 2.0
+
 def get_args():
     parser = argparse.ArgumentParser(description='Train Segmentation Models')
     parser.add_argument('--dataset-name', type=str, required=True, choices=list(config.DATASET_CONFIG.keys()))
@@ -75,8 +76,17 @@ def get_args():
     parser.add_argument('--patience', type=int, default=30)
     parser.add_argument('--lasa-kernels', type=int, nargs='+', default=[1, 3, 5, 7])
     parser.add_argument('--deep-supervision-weights', type=float, nargs='+', default=[0.2, 0.4, 0.6, 0.8, 1.0])
+    
+    # --- MODIFICATION: Added arguments for loss function ablation study ---
+    parser.add_argument('--loss-functions', type=str, nargs='+', default=['focal', 'dice', 'boundary'], 
+                        choices=['focal', 'dice', 'boundary', 'ce'], 
+                        help='List of loss functions to use for training.')
     parser.add_argument('--focal-loss-weight', type=float, default=0.5)
     parser.add_argument('--dice-loss-weight', type=float, default=1.5)
+    parser.add_argument('--boundary-loss-weight', type=float, default=1.5, help='Weight for the dedicated boundary loss.')
+    parser.add_argument('--ce-loss-weight', type=float, default=1.0, help='Weight for Cross-Entropy loss.')
+    # --------------------------------------------------------------------
+
     parser.add_argument('--scheduler-type', type=str, default='CosineAnnealingWarmRestarts', choices=['ReduceLROnPlateau', 'CosineAnnealingWarmRestarts'])
     parser.add_argument('--scheduler-T0', type=int, default=15)
     parser.add_argument('--scheduler-T-mult', type=int, default=2)
@@ -85,7 +95,6 @@ def get_args():
     parser.add_argument('--resume', action='store_true')
     parser.add_argument('--num-workers', type=int, default=2)
     parser.add_argument('--fine-tune-epochs', type=int, default=40)
-    parser.add_argument('--boundary-loss-weight', type=float, default=1.5, help='Weight for the dedicated boundary loss.')
     parser.add_argument('--scale-h', type=int, default=None, help='Target height for image resizing.')
     parser.add_argument('--scale-w', type=int, default=None, help='Target width for image resizing.')
     parser.add_argument('--k-folds', type=int, default=1, help='Number of folds for cross-validation. Default is 1 (no k-fold).')
@@ -95,11 +104,12 @@ def get_args():
     args.dataset_path, args.num_classes = dataset_info['path'], dataset_info['num_classes']
     if args.scale_h is None or args.scale_w is None:
         res_h, res_w = config.get_backbone_resolution(args.backbone)
-        if args.scale_h is None: args.scale_h = args.scale_h
-        if args.scale_w is None: args.scale_w = args.scale_w
+        if args.scale_h is None: args.scale_h = res_h
+        if args.scale_w is None: args.scale_w = res_w
     for k, v in config.DEFAULT_ARGS.items():
         if not hasattr(args, k): setattr(args, k, v)
     return args
+
 def setup_logging(log_dir, filename='training.log'):
     for h in logging.root.handlers[:]: logging.root.removeHandler(h)
     logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s',
@@ -107,25 +117,49 @@ def setup_logging(log_dir, filename='training.log'):
 def custom_collate_fn(batch):
     batch = [item for item in batch if item is not None]
     return torch.utils.data.dataloader.default_collate(batch) if batch else None
-def evaluate_model(net, data_loader, device, focal_loss_fn, dice_loss_fn, args, mode="Validating"):
+
+# --- MODIFICATION: Updated evaluate_model to handle flexible loss functions ---
+def evaluate_model(net, data_loader, device, loss_fns, args, mode="Validating"):
     net.eval()
     confmat, loss_recorder = ConfusionMatrix(args.num_classes), AvgMeter()
+    focal_loss_fn, dice_loss_fn, ce_loss_fn = loss_fns['focal'], loss_fns['dice'], loss_fns['ce']
+
     with torch.no_grad():
         for data in tqdm(data_loader, desc=mode, leave=False):
             if data is None: continue
             inputs, labels = data['image'].to(device), data['label'].to(device)
             outputs = net(inputs)
-            total_loss = 0
-            for i, pred in enumerate(outputs):
-                f_l, d_l = focal_loss_fn(pred, labels.long()), dice_loss_fn(pred, labels.long())
-                total_loss += args.deep_supervision_weights[i] * ((args.focal_loss_weight * f_l) + (args.dice_loss_weight * d_l))
+            
+            deep_supervised_loss = 0
+            for head_idx, pred_output in enumerate(outputs):
+                head_loss = 0
+                if 'focal' in args.loss_functions:
+                    head_loss += args.focal_loss_weight * focal_loss_fn(pred_output, labels.long())
+                if 'dice' in args.loss_functions:
+                    head_loss += args.dice_loss_weight * dice_loss_fn(pred_output, labels.long())
+                if 'ce' in args.loss_functions:
+                    head_loss += args.ce_loss_weight * ce_loss_fn(pred_output, labels.long())
+                deep_supervised_loss += args.deep_supervision_weights[head_idx] * head_loss
+
+            boundary_loss = 0
+            if 'boundary' in args.loss_functions:
+                boundary_mask = create_boundary_mask(labels.unsqueeze(1).float())
+                final_pred_logits_class1 = outputs[-1][:, 1, :, :].unsqueeze(1)
+                boundary_bce_loss = F.binary_cross_entropy_with_logits(final_pred_logits_class1, boundary_mask, reduction='none')
+                boundary_loss = (boundary_bce_loss * boundary_mask).mean() * args.boundary_loss_weight
+
+            total_loss = deep_supervised_loss + boundary_loss
             loss_recorder.update(total_loss.item(), inputs.size(0))
             confmat.update(labels.flatten(), outputs[-1].argmax(1).flatten())
+            
     acc_global, acc, iu, FWIoU, mDice = confmat.compute()
     miou = iu.mean().item()
     logging.info(f"--- {mode} Summary --- Loss: {loss_recorder.avg:.4f}, OA: {acc_global.item():.4f}, mIoU: {miou:.4f}, FW-IoU: {FWIoU.item():.4f}, Dice: {mDice:.4f}")
     if mode.startswith("Validating"): net.train()
     return acc_global.item(), miou, FWIoU.item(), mDice
+# --------------------------------------------------------------------------
+
+# ... (The test function remains unchanged) ...
 def test(args):
     device = torch.device("cuda")
     exp_name = f"{args.backbone}_FreezeTune_LASA_{args.dataset_name.replace('TSRS_RSNA-', '').lower()}"
@@ -188,6 +222,7 @@ def test(args):
     logging.info("="*50)
 
 
+# --- MODIFICATION: Updated train_fold to handle flexible loss functions ---
 def train_fold(args, fold_idx, train_imgs, val_imgs):
     device = torch.device("cuda")
     exp_name = f"{args.backbone}_FreezeTune_LASA_{args.dataset_name.replace('TSRS_RSNA-', '').lower()}"
@@ -195,14 +230,22 @@ def train_fold(args, fold_idx, train_imgs, val_imgs):
     check_mkdir(fold_exp_path)
     setup_logging(fold_exp_path, f'fold_{fold_idx}_training.log')
     logging.info(f"===== Starting Fold {fold_idx}/{args.k_folds if args.k_folds > 1 else 1} =====")
+    logging.info(f"Using loss functions: {', '.join(args.loss_functions)}")
+
     train_ds = ImageFolder(root=args.dataset_path, dataset_name=args.dataset_name, args=args, split='train', imgs=train_imgs)
     val_ds = ImageFolder(root=args.dataset_path, dataset_name=args.dataset_name, args=args, split='val', imgs=val_imgs)
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, collate_fn=custom_collate_fn)
     val_loader = DataLoader(val_ds, batch_size=1, shuffle=False, num_workers=args.num_workers, collate_fn=custom_collate_fn)
     net = Light_LASA_Unet(num_classes=args.num_classes, backbone_name=args.backbone, lasa_kernels=args.lasa_kernels).to(device)
     logging.info(f"Successfully instantiated Light_LASA_Unet with backbone: {args.backbone}")
-    focal_loss_fn = FocalLoss(alpha=config.FOCAL_ALPHA, gamma=config.FOCAL_GAMMA).to(device)
-    dice_loss_fn = DiceLoss().to(device)
+    
+    # Instantiate all potential loss functions
+    loss_fns = {
+        'focal': FocalLoss(alpha=config.FOCAL_ALPHA, gamma=config.FOCAL_GAMMA).to(device),
+        'dice': DiceLoss().to(device),
+        'ce': nn.CrossEntropyLoss().to(device)
+    }
+
     optimizer = optim.Adam(net.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=args.scheduler_T0, T_mult=2, eta_min=1e-6) if args.scheduler_type == 'CosineAnnealingWarmRestarts' else optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', patience=args.scheduler_patience)
     start_epoch, best_mIoU, patience_counter = 0, 0.0, 0
@@ -225,6 +268,7 @@ def train_fold(args, fold_idx, train_imgs, val_imgs):
             
     if start_epoch < args.fine_tune_epochs: freeze_backbone(net)
     else: unfreeze_backbone(net)
+
     for epoch in range(start_epoch, args.epochs):
         if epoch == args.fine_tune_epochs:
             unfreeze_backbone(net)
@@ -232,8 +276,8 @@ def train_fold(args, fold_idx, train_imgs, val_imgs):
             optimizer = optim.Adam(net.parameters(), lr=new_lr, weight_decay=args.weight_decay)
             scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=args.scheduler_T0, T_mult=2, eta_min=1e-6)
             logging.info(f"--- Switched to Phase 2. New LR: {new_lr} ---")
-        net.train()
         
+        net.train()
         loss_recorder = AvgMeter()
         train_confmat = ConfusionMatrix(args.num_classes)
         train_iterator = tqdm(train_loader, desc=f"Epoch {epoch+1}/{args.epochs} (Fold {fold_idx})")
@@ -241,29 +285,35 @@ def train_fold(args, fold_idx, train_imgs, val_imgs):
         for data in train_iterator:
             if data is None: continue
             inputs, labels = data['image'].to(device), data['label'].to(device)
-            labels_float_unsqueezed = labels.unsqueeze(1).float()
             optimizer.zero_grad(set_to_none=True)
             
             outputs = net(inputs)
             
-            # --- ADDITION: Update training confusion matrix with the final prediction ---
             with torch.no_grad():
                 train_confmat.update(labels.flatten(), outputs[-1].argmax(1).flatten())
-            # -------------------------------------------------------------------------
-            
-            main_loss = 0
+
+            # --- Refactored Loss Calculation ---
+            deep_supervised_loss = 0
             for head_idx, pred_output in enumerate(outputs):
-                f_loss = focal_loss_fn(pred_output, labels.long())
-                d_loss = dice_loss_fn(pred_output, labels.long())
-                main_loss += args.deep_supervision_weights[head_idx] * ((args.focal_loss_weight * f_loss) + (args.dice_loss_weight * d_loss))
+                head_loss = 0
+                if 'focal' in args.loss_functions:
+                    head_loss += args.focal_loss_weight * loss_fns['focal'](pred_output, labels.long())
+                if 'dice' in args.loss_functions:
+                    head_loss += args.dice_loss_weight * loss_fns['dice'](pred_output, labels.long())
+                if 'ce' in args.loss_functions:
+                    head_loss += args.ce_loss_weight * loss_fns['ce'](pred_output, labels.long())
+                deep_supervised_loss += args.deep_supervision_weights[head_idx] * head_loss
+
+            boundary_loss = 0
+            if 'boundary' in args.loss_functions:
+                boundary_mask = create_boundary_mask(labels.unsqueeze(1).float())
+                final_pred_logits_class1 = outputs[-1][:, 1, :, :].unsqueeze(1)
+                boundary_bce_loss = F.binary_cross_entropy_with_logits(final_pred_logits_class1, boundary_mask, reduction='none')
+                boundary_loss = (boundary_bce_loss * boundary_mask).mean() * args.boundary_loss_weight
             
-            boundary_mask = create_boundary_mask(labels_float_unsqueezed)
-            final_pred_logits = outputs[-1][:, 1, :, :].unsqueeze(1)
-            boundary_bce_loss = F.binary_cross_entropy_with_logits(final_pred_logits, boundary_mask, reduction='none')
-            boundary_loss = (boundary_bce_loss * boundary_mask).mean()
-            
-            total_loss = main_loss + (args.boundary_loss_weight * boundary_loss)
-            
+            total_loss = deep_supervised_loss + boundary_loss
+            # --- End of Refactored Loss Calculation ---
+
             total_loss.backward()
             optimizer.step()
             
@@ -274,7 +324,7 @@ def train_fold(args, fold_idx, train_imgs, val_imgs):
         train_miou = train_iu.mean().item()
         logging.info(f"--- Train Summary (Epoch {epoch+1}) --- Loss: {loss_recorder.avg:.4f}, OA: {train_acc_global.item():.4f}, mIoU: {train_miou:.4f}, Dice: {train_mDice:.4f}")
 
-        _, current_mIoU, _, _ = evaluate_model(net, val_loader, device, focal_loss_fn, dice_loss_fn, args, mode=f"Validating Fold {fold_idx}")
+        _, current_mIoU, _, _ = evaluate_model(net, val_loader, device, loss_fns, args, mode=f"Validating Fold {fold_idx}")
         
         if isinstance(scheduler, optim.lr_scheduler.ReduceLROnPlateau): scheduler.step(current_mIoU)
         else: scheduler.step()
@@ -295,7 +345,9 @@ def train_fold(args, fold_idx, train_imgs, val_imgs):
             
     logging.info(f"===== Finished Fold {fold_idx} ===== Best Val mIoU: {best_mIoU:.4f}")
     return best_mIoU
+# -------------------------------------------------------------------------
 
+# ... (The main function remains unchanged) ...
 def main():
     args = get_args()
     if args.test_only:
