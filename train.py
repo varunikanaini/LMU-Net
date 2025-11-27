@@ -187,7 +187,7 @@ def test(args):
         ckpt_path = os.path.join(base_exp_path, f"fold_{fold_idx}", 'best_checkpoint.pth')
         if not os.path.exists(ckpt_path):
             logging.warning(f"Checkpoint for fold {fold_idx} not found. SKIPPING."); continue
-        net.load_state_dict(torch.load(ckpt_path, map_location=device))
+        net.load_state_dict(torch.load(ckpt_path, map_location=device), strict=False)
         net.eval()
         conf_matrix = ConfusionMatrix(args.num_classes)
         acd_scores = []
