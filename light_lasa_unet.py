@@ -1,4 +1,4 @@
-# light_lasa_unet.py
+# /kaggle/working/LMU-Net/light_lasa_unet.py
 
 import torch
 import torch.nn as nn
@@ -11,11 +11,17 @@ import config
 
 
 class Light_LASA_Unet(nn.Module):
-    def __init__(self, num_classes=2, backbone_name='mobilenet_v2', lasa_kernels=[1, 3, 5, 7]):
+    # --- MODIFICATION START ---
+    # Added `num_image_classes` to accept the number of classes for the image-level classification task
+    def __init__(self, num_classes=2, num_image_classes=None, backbone_name='mobilenet_v2', lasa_kernels=[1, 3, 5, 7]):
+    # --- MODIFICATION END ---
         super(Light_LASA_Unet, self).__init__()
         self.backbone_name = backbone_name
-        self.num_classes = num_classes
+        self.num_classes = num_classes # For segmentation
         self.lasa_kernels = lasa_kernels
+        # --- MODIFICATION START ---
+        self.num_image_classes = num_image_classes # For image classification
+        # --- MODIFICATION END ---
 
         self._get_backbone_features(backbone_name)
 
@@ -48,6 +54,19 @@ class Light_LASA_Unet(nn.Module):
         self.aux_conv_d1 = nn.Conv2d(64, num_classes, kernel_size=1)
 
         self.final_conv = nn.Conv2d(64, num_classes, kernel_size=1)
+        
+        # --- MODIFICATION START ---
+        # Define the new classification head, which branches off the bottleneck
+        if self.num_image_classes is not None:
+            self.classification_head = nn.Sequential(
+                nn.AdaptiveAvgPool2d((1, 1)), # Global Average Pooling to get a single feature vector
+                nn.Flatten(),
+                nn.Linear(bottle_ch, 512),
+                nn.ReLU(inplace=True),
+                nn.Dropout(0.3),
+                nn.Linear(512, self.num_image_classes)
+            )
+        # --- MODIFICATION END ---
 
     def _get_backbone_features(self, backbone_name):
         if backbone_name == 'mobilenet_v2':
@@ -66,7 +85,6 @@ class Light_LASA_Unet(nn.Module):
             self.bottleneck_layer = nn.Sequential(*features[39:52])
         elif backbone_name == 'vgg16':
             features = models.vgg16_bn(weights=models.VGG16_BN_Weights.DEFAULT).features
-            # Correct slicing for vgg16_bn
             self.encoder1 = nn.Sequential(*features[:6])
             self.encoder2 = nn.Sequential(*features[6:13])
             self.encoder3 = nn.Sequential(*features[13:23])
@@ -78,6 +96,7 @@ class Light_LASA_Unet(nn.Module):
     def forward(self, x):
         input_h, input_w = x.shape[2:]
 
+        # --- Encoder Path ---
         e1 = self.encoder1(x)
         e2 = self.encoder2(e1)
         e3 = self.encoder3(e2)
@@ -86,6 +105,14 @@ class Light_LASA_Unet(nn.Module):
         e4_enhanced = self.lasa_module(e4)
         bottleneck = self.bottleneck_layer(e4_enhanced)
 
+        # --- MODIFICATION START ---
+        # Calculate classification output if the head exists
+        class_output = None
+        if self.num_image_classes is not None:
+            class_output = self.classification_head(bottleneck)
+        # --- MODIFICATION END ---
+
+        # --- Decoder Path (Segmentation) ---
         aux_outputs = []
 
         d4_input = torch.cat([F.interpolate(bottleneck, size=e4.shape[2:], mode='bilinear', align_corners=True), e4], dim=1)
@@ -107,4 +134,13 @@ class Light_LASA_Unet(nn.Module):
         final_output = self.final_conv(d1_out)
         final_output_upsampled = F.interpolate(final_output, size=(input_h, input_w), mode='bilinear', align_corners=True)
 
-        return tuple(aux_outputs + [final_output_upsampled])
+        seg_outputs = tuple(aux_outputs + [final_output_upsampled])
+
+        # --- MODIFICATION START ---
+        # Return both segmentation and classification outputs if multi-tasking is enabled
+        if self.num_image_classes is not None:
+            return seg_outputs, class_output
+        else:
+            # Maintain original behavior and expected output format if not multi-tasking
+            return seg_outputs, None
+        # --- MODIFICATION END ---

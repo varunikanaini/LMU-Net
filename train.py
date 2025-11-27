@@ -20,7 +20,6 @@ from datasets import ImageFolder, make_dataset
 from seg_utils import ConfusionMatrix
 from misc import AvgMeter, check_mkdir
 
-# ... (All functions before train_fold are unchanged) ...
 class FocalLoss(nn.Module):
     def __init__(self, alpha=0.5, gamma=2): super(FocalLoss, self).__init__(); self.alpha, self.gamma = alpha, gamma
     def forward(self, i, t):
@@ -64,6 +63,7 @@ def calculate_acd(pred_mask, gt_mask):
     dist_pred_to_gt = np.mean(np.min(dist_matrix, axis=1))
     dist_gt_to_pred = np.mean(np.min(dist_matrix, axis=0))
     return (dist_pred_to_gt + dist_gt_to_pred) / 2.0
+    
 def get_args():
     parser = argparse.ArgumentParser(description='Train Segmentation Models')
     parser.add_argument('--dataset-name', type=str, required=True, choices=list(config.DATASET_CONFIG.keys()))
@@ -90,42 +90,78 @@ def get_args():
     parser.add_argument('--scale-w', type=int, default=None, help='Target width for image resizing.')
     parser.add_argument('--k-folds', type=int, default=1, help='Number of folds for cross-validation. Default is 1 (no k-fold).')
     parser.add_argument('--random-state', type=int, default=42, help='Random state for KFold split for reproducibility.')
+    
+    # --- MODIFICATION START ---
+    parser.add_argument('--classification-loss-weight', type=float, default=0.0, 
+                        help='Weight for auxiliary image classification loss (presence/absence). Set to > 0.0 to enable.')
+    # --- MODIFICATION END ---
+
     args = parser.parse_args()
     dataset_info = config.DATASET_CONFIG[args.dataset_name]
     args.dataset_path, args.num_classes = dataset_info['path'], dataset_info['num_classes']
+    
+    # --- MODIFICATION START ---
+    # Dynamically set the number of image classes if the feature is enabled by the user
+    if args.classification_loss_weight > 0:
+        # Our proxy label is binary: 0 (absent) or 1 (present)
+        args.num_image_classes = 2 
+    else:
+        args.num_image_classes = None
+    # --- MODIFICATION END ---
+    
     if args.scale_h is None or args.scale_w is None:
         res_h, res_w = config.get_backbone_resolution(args.backbone)
-        if args.scale_h is None: args.scale_h = args.scale_h
-        if args.scale_w is None: args.scale_w = args.scale_w
+        if args.scale_h is None: args.scale_h = res_h
+        if args.scale_w is None: args.scale_w = res_w
     for k, v in config.DEFAULT_ARGS.items():
         if not hasattr(args, k): setattr(args, k, v)
     return args
+    
 def setup_logging(log_dir, filename='training.log'):
     for h in logging.root.handlers[:]: logging.root.removeHandler(h)
     logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s',
                         handlers=[logging.FileHandler(os.path.join(log_dir, filename)), logging.StreamHandler()])
+                        
 def custom_collate_fn(batch):
     batch = [item for item in batch if item is not None]
     return torch.utils.data.dataloader.default_collate(batch) if batch else None
-def evaluate_model(net, data_loader, device, focal_loss_fn, dice_loss_fn, args, mode="Validating"):
+    
+def evaluate_model(net, data_loader, device, focal_loss_fn, dice_loss_fn, classification_loss_fn, args, mode="Validating"):
     net.eval()
     confmat, loss_recorder = ConfusionMatrix(args.num_classes), AvgMeter()
     with torch.no_grad():
         for data in tqdm(data_loader, desc=mode, leave=False):
             if data is None: continue
-            inputs, labels = data['image'].to(device), data['label'].to(device)
-            outputs = net(inputs)
-            total_loss = 0
-            for i, pred in enumerate(outputs):
-                f_l, d_l = focal_loss_fn(pred, labels.long()), dice_loss_fn(pred, labels.long())
-                total_loss += args.deep_supervision_weights[i] * ((args.focal_loss_weight * f_l) + (args.dice_loss_weight * d_l))
+            
+            inputs = data['image'].to(device)
+            seg_labels = data['seg_label'].to(device)
+
+            seg_outputs, class_output = net(inputs)
+
+            # --- Segmentation Loss Calculation ---
+            seg_loss = 0
+            for i, pred in enumerate(seg_outputs):
+                f_l = focal_loss_fn(pred, seg_labels.long())
+                d_l = dice_loss_fn(pred, seg_labels.long())
+                seg_loss += args.deep_supervision_weights[i] * ((args.focal_loss_weight * f_l) + (args.dice_loss_weight * d_l))
+            
+            # --- Classification Loss Calculation ---
+            class_loss = 0
+            if args.num_image_classes is not None:
+                class_labels = data['class_label'].to(device)
+                class_loss = classification_loss_fn(class_output, class_labels)
+            
+            total_loss = seg_loss + (args.classification_loss_weight * class_loss)
+            
             loss_recorder.update(total_loss.item(), inputs.size(0))
-            confmat.update(labels.flatten(), outputs[-1].argmax(1).flatten())
+            confmat.update(seg_labels.flatten(), seg_outputs[-1].argmax(1).flatten())
+
     acc_global, acc, iu, FWIoU, mDice = confmat.compute()
     miou = iu.mean().item()
     logging.info(f"--- {mode} Summary --- Loss: {loss_recorder.avg:.4f}, OA: {acc_global.item():.4f}, mIoU: {miou:.4f}, FW-IoU: {FWIoU.item():.4f}, Dice: {mDice:.4f}")
     if mode.startswith("Validating"): net.train()
     return acc_global.item(), miou, FWIoU.item(), mDice
+    
 def test(args):
     device = torch.device("cuda")
     exp_name = f"{args.backbone}_FreezeTune_LASA_{args.dataset_name.replace('TSRS_RSNA-', '').lower()}"
@@ -136,7 +172,13 @@ def test(args):
     if len(test_ds) == 0:
         logging.error("No images found for the 'test' split. Exiting."); return
     test_loader = DataLoader(test_ds, batch_size=1, shuffle=False, num_workers=args.num_workers, collate_fn=custom_collate_fn)
-    net = Light_LASA_Unet(num_classes=args.num_classes, backbone_name=args.backbone, lasa_kernels=args.lasa_kernels).to(device)
+    
+    # --- MODIFICATION: Pass num_image_classes during test instantiation ---
+    net = Light_LASA_Unet(num_classes=args.num_classes, 
+                          num_image_classes=args.num_image_classes,
+                          backbone_name=args.backbone, 
+                          lasa_kernels=args.lasa_kernels).to(device)
+    
     logging.info(f"Instantiated Light_LASA_Unet with backbone: {args.backbone}")
     all_fold_metrics = {'oa':[], 'miou':[], 'dice':[], 'fwiou':[], 'acd':[], 'sensitivity':[], 'specificity':[], 'precision':[]}
     num_folds_to_test = args.k_folds if args.k_folds > 1 else 1
@@ -152,9 +194,9 @@ def test(args):
         with torch.no_grad():
             for sample in tqdm(test_loader, desc=f"Testing Fold {fold_idx}"):
                 if sample is None: continue
-                image, gt_label_np = sample['image'].to(device), sample['label'].squeeze(0).numpy()
-                outputs = net(image)
-                pred_np = outputs[-1].argmax(1).squeeze(0).cpu().numpy()
+                image, gt_label_np = sample['image'].to(device), sample['seg_label'].squeeze(0).numpy()
+                seg_outputs, _ = net(image)
+                pred_np = seg_outputs[-1].argmax(1).squeeze(0).cpu().numpy()
                 conf_matrix.update(torch.from_numpy(gt_label_np).flatten(), torch.from_numpy(pred_np).flatten())
                 acd = calculate_acd(pred_np, gt_label_np)
                 if not np.isnan(acd): acd_scores.append(acd)
@@ -187,7 +229,6 @@ def test(args):
         logging.info(f"Average {key.capitalize():<12}: {mean:.4f} ± {std:.4f}")
     logging.info("="*50)
 
-
 def train_fold(args, fold_idx, train_imgs, val_imgs):
     device = torch.device("cuda")
     exp_name = f"{args.backbone}_FreezeTune_LASA_{args.dataset_name.replace('TSRS_RSNA-', '').lower()}"
@@ -195,14 +236,25 @@ def train_fold(args, fold_idx, train_imgs, val_imgs):
     check_mkdir(fold_exp_path)
     setup_logging(fold_exp_path, f'fold_{fold_idx}_training.log')
     logging.info(f"===== Starting Fold {fold_idx}/{args.k_folds if args.k_folds > 1 else 1} =====")
+    
+    if args.num_image_classes is not None:
+        logging.info(f"Multi-task training enabled: Segmentation + Classification (weight: {args.classification_loss_weight})")
+        
     train_ds = ImageFolder(root=args.dataset_path, dataset_name=args.dataset_name, args=args, split='train', imgs=train_imgs)
     val_ds = ImageFolder(root=args.dataset_path, dataset_name=args.dataset_name, args=args, split='val', imgs=val_imgs)
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, collate_fn=custom_collate_fn)
     val_loader = DataLoader(val_ds, batch_size=1, shuffle=False, num_workers=args.num_workers, collate_fn=custom_collate_fn)
-    net = Light_LASA_Unet(num_classes=args.num_classes, backbone_name=args.backbone, lasa_kernels=args.lasa_kernels).to(device)
+    
+    net = Light_LASA_Unet(num_classes=args.num_classes, 
+                          num_image_classes=args.num_image_classes,
+                          backbone_name=args.backbone, 
+                          lasa_kernels=args.lasa_kernels).to(device)
+                          
     logging.info(f"Successfully instantiated Light_LASA_Unet with backbone: {args.backbone}")
     focal_loss_fn = FocalLoss(alpha=config.FOCAL_ALPHA, gamma=config.FOCAL_GAMMA).to(device)
     dice_loss_fn = DiceLoss().to(device)
+    classification_loss_fn = nn.CrossEntropyLoss().to(device)
+    
     optimizer = optim.Adam(net.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=args.scheduler_T0, T_mult=2, eta_min=1e-6) if args.scheduler_type == 'CosineAnnealingWarmRestarts' else optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', patience=args.scheduler_patience)
     start_epoch, best_mIoU, patience_counter = 0, 0.0, 0
@@ -240,29 +292,35 @@ def train_fold(args, fold_idx, train_imgs, val_imgs):
         
         for data in train_iterator:
             if data is None: continue
-            inputs, labels = data['image'].to(device), data['label'].to(device)
-            labels_float_unsqueezed = labels.unsqueeze(1).float()
+            inputs = data['image'].to(device)
+            seg_labels = data['seg_label'].to(device)
+            
             optimizer.zero_grad(set_to_none=True)
             
-            outputs = net(inputs)
+            seg_outputs, class_output = net(inputs)
             
-            # --- ADDITION: Update training confusion matrix with the final prediction ---
             with torch.no_grad():
-                train_confmat.update(labels.flatten(), outputs[-1].argmax(1).flatten())
-            # -------------------------------------------------------------------------
+                train_confmat.update(seg_labels.flatten(), seg_outputs[-1].argmax(1).flatten())
             
             main_loss = 0
-            for head_idx, pred_output in enumerate(outputs):
-                f_loss = focal_loss_fn(pred_output, labels.long())
-                d_loss = dice_loss_fn(pred_output, labels.long())
+            for head_idx, pred_output in enumerate(seg_outputs):
+                f_loss = focal_loss_fn(pred_output, seg_labels.long())
+                d_loss = dice_loss_fn(pred_output, seg_labels.long())
                 main_loss += args.deep_supervision_weights[head_idx] * ((args.focal_loss_weight * f_loss) + (args.dice_loss_weight * d_loss))
             
-            boundary_mask = create_boundary_mask(labels_float_unsqueezed)
-            final_pred_logits = outputs[-1][:, 1, :, :].unsqueeze(1)
+            boundary_mask = create_boundary_mask(seg_labels.unsqueeze(1).float())
+            final_pred_logits = seg_outputs[-1][:, 1, :, :].unsqueeze(1)
             boundary_bce_loss = F.binary_cross_entropy_with_logits(final_pred_logits, boundary_mask, reduction='none')
             boundary_loss = (boundary_bce_loss * boundary_mask).mean()
             
-            total_loss = main_loss + (args.boundary_loss_weight * boundary_loss)
+            segmentation_loss = main_loss + (args.boundary_loss_weight * boundary_loss)
+            
+            classification_loss = 0
+            if args.num_image_classes is not None:
+                class_labels = data['class_label'].to(device)
+                classification_loss = classification_loss_fn(class_output, class_labels)
+            
+            total_loss = segmentation_loss + (args.classification_loss_weight * classification_loss)
             
             total_loss.backward()
             optimizer.step()
@@ -274,7 +332,7 @@ def train_fold(args, fold_idx, train_imgs, val_imgs):
         train_miou = train_iu.mean().item()
         logging.info(f"--- Train Summary (Epoch {epoch+1}) --- Loss: {loss_recorder.avg:.4f}, OA: {train_acc_global.item():.4f}, mIoU: {train_miou:.4f}, Dice: {train_mDice:.4f}")
 
-        _, current_mIoU, _, _ = evaluate_model(net, val_loader, device, focal_loss_fn, dice_loss_fn, args, mode=f"Validating Fold {fold_idx}")
+        _, current_mIoU, _, _ = evaluate_model(net, val_loader, device, focal_loss_fn, dice_loss_fn, classification_loss_fn, args, mode=f"Validating Fold {fold_idx}")
         
         if isinstance(scheduler, optim.lr_scheduler.ReduceLROnPlateau): scheduler.step(current_mIoU)
         else: scheduler.step()

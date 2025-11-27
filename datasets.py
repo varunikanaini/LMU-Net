@@ -1,4 +1,4 @@
-# datasets.py
+# /kaggle/working/LMU-Net/datasets.py
 
 import os
 import torch
@@ -146,7 +146,7 @@ class ImageFolder(data.Dataset):
         self.mean = (0.485, 0.456, 0.406)
         self.std = (0.229, 0.224, 0.225)
 
-        if dataset_name in ['JSRT', 'COVID19_Radiography', 'MontgomeryCounty']:
+        if dataset_name in config.GRAYSCALE_DATASETS:
             self.mean = [0.5]
             self.std = [0.5]
 
@@ -173,15 +173,11 @@ class ImageFolder(data.Dataset):
         try:
             if self.dataset_name == 'MontgomeryCounty':
                 img_path, left_gt_path, right_gt_path = self.imgs[index]
-                
                 left_mask_cv = cv2.imread(left_gt_path, cv2.IMREAD_GRAYSCALE)
                 right_mask_cv = cv2.imread(right_gt_path, cv2.IMREAD_GRAYSCALE)
-                
                 if left_mask_cv is None or right_mask_cv is None:
                     raise FileNotFoundError(f"Could not read one or both masks for {img_path}")
-                
                 mask_cv = cv2.bitwise_or(left_mask_cv, right_mask_cv)
-                
             else: 
                 img_path, gt_path = self.imgs[index]
                 mask_cv = cv2.imread(gt_path, cv2.IMREAD_GRAYSCALE)
@@ -192,6 +188,15 @@ class ImageFolder(data.Dataset):
             if img_cv is None:
                 raise FileNotFoundError(f"OpenCV could not read image: {img_path}.")
 
+            # --- MODIFICATION START ---
+            # Automatically generate the image-level class label based on mask presence.
+            # Class 1 if mask has any positive pixels, Class 0 otherwise.
+            if np.sum(mask_cv) > 0:
+                image_class_label = 1
+            else:
+                image_class_label = 0
+            # --- MODIFICATION END ---
+
             if img_cv.ndim == 3 and img_cv.shape[2] == 3:
                 img_cv = cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)
             elif img_cv.ndim == 2:
@@ -199,19 +204,28 @@ class ImageFolder(data.Dataset):
 
             img = Image.fromarray(img_cv)
             target = Image.fromarray(mask_cv, mode='L')
-            label = self.convert_label(target)
+            seg_label = self.convert_label(target)
 
         except (UnidentifiedImageError, FileNotFoundError, cv2.error, ValueError, Exception) as e:
             print(f"ERROR: Could not process sample at index {index}. Error: {e}. Skipping.")
             return None
 
-        sample = {'image': img, 'label': label}
-        transformed_sample = self.composed_transforms(sample)
+        # --- MODIFICATION START ---
+        # The composed_transforms expect a dict with 'image' and the original 'label' key
+        transformed_sample = self.composed_transforms({'image': img, 'label': seg_label})
+
+        # Assemble the final dictionary with all required data using new, specific keys
+        final_sample = {
+            'image': transformed_sample['image'],
+            'seg_label': transformed_sample['label'],
+            'class_label': torch.tensor(image_class_label, dtype=torch.long)
+        }
 
         if self.split != 'train':
-            transformed_sample['name'] = os.path.basename(img_path)
+            final_sample['name'] = os.path.basename(img_path)
 
-        return transformed_sample
+        return final_sample
+        # --- MODIFICATION END ---
 
     def convert_label(self, label):
         label_np = np.array(label, dtype=np.uint8)
